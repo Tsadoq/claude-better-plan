@@ -14,7 +14,7 @@ You are at the start of /deep-plan. Before doing anything else:
    "Plan File Info: ... create your plan at <ABS_PATH>". Capture <ABS_PATH>.
 
 3. Run setup_session.py to bootstrap session state:
-       python3 ~/.claude/skills/deep-plan/scripts/setup_session.py \
+       python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
          --harness-plan-path <ABS_PATH> \
          --session-id <SESSION_ID>
 
@@ -30,7 +30,7 @@ You are at the start of /deep-plan. Before doing anything else:
    4. <repo-parent>/<repo-name>-plans/
 
    The default MUST NOT be ~/.claude/plans/. Persist the user's choice via:
-       python3 ~/.claude/skills/deep-plan/scripts/setup_session.py \
+       python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
          --update plans_dir=<ABS_PATH> --session-id <SESSION_ID>
 
 5. After state is bootstrapped, print a single short status sentence to the user and
@@ -152,12 +152,12 @@ Sub-steps in order:
    - Format: [a-z0-9-]{1,60}, lowercase, hyphen-separated, no leading/trailing or
      double hyphens.
    - Run resolve_slug.py to normalise and check for collision:
-       python3 ~/.claude/skills/deep-plan/scripts/resolve_slug.py \
+       python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/resolve_slug.py \
          --slug <s> --plans-dir <d>
    - On collision, follow the section "Slug generation and collision handling" in PLAN.md.
 
 2. Update state with the resolved custom_plan_path:
-       python3 ~/.claude/skills/deep-plan/scripts/setup_session.py \
+       python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
          --update custom_plan_path=<plans_dir>/<slug>.md --session-id <SESSION_ID>
 
 3. Perspective fan-out: launch 1 to 3 dp-plan-perspective agents in parallel. Pick from
@@ -198,15 +198,13 @@ The "approve" branch leads to Phase 5. Other branches loop back appropriately.
 
 ```
 1. Run finalize_plan.py:
-       python3 ~/.claude/skills/deep-plan/scripts/finalize_plan.py \
+       python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/finalize_plan.py \
          --custom <custom_plan_path> --harness <harness_plan_path>
 
    The script:
    - Validates required sections present (Context, Decisions made, Tasks with all
      subsections, References, Open questions).
    - Copies custom_plan_path to harness_plan_path so ExitPlanMode reads the right file.
-   - If the canonical file starts with `<!-- deep-plan-version:`, also mirrors it to
-     ~/gits/plan-modes/deep-plan/PLAN.md.
    - Returns "ok" or a list of validation failures.
 
 2. On "ok": call ExitPlanMode with no parameters.

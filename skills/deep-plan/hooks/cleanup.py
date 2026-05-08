@@ -10,12 +10,20 @@ Never blocks session end. All exceptions are swallowed silently.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 import time
 from pathlib import Path
 
-STATE_DIR = Path.home() / ".claude" / "deep-plan" / "state"
+
+def _runtime_dir() -> Path:
+    raw = os.environ.get("XDG_STATE_HOME")
+    base = Path(raw) if raw else Path.home() / ".local" / "state"
+    return base / "deep-plan"
+
+
+STATE_DIR = _runtime_dir() / "state"
 TMP = Path("/tmp")
 SANDBOX_PREFIX = "deep-plan-"
 TTL_SECONDS = 7 * 86400

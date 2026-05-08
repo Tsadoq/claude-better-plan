@@ -39,35 +39,46 @@ flowchart TD
 
 ## Quick start
 
+In Claude Code:
+
 ```
-git clone <this-repo>            # if not already cloned
-cd ~/gits/plan-modes/deep-plan
-python3 install.py
-# restart Claude Code so the skill is discovered
-# then in any project:
+/plugin marketplace add tsadoq/claude-better-plan
+/plugin install deep-plan@claude-better-plan
+```
+
+Then in any project:
+
+```
 /deep-plan add a rate limiter to the API
 ```
 
-`install.py` is idempotent. Re-run it any time the source files change.
+To install from a local checkout while developing:
+
+```
+/plugin marketplace add /absolute/path/to/claude-better-plan
+/plugin install deep-plan@claude-better-plan
+```
 
 ## File layout
 
-Source of truth lives at `~/gits/plan-modes/deep-plan/`. After running `install.py`, Claude Code sees the artifacts via symlinks under `~/.claude/`. Runtime data lives only under `~/.claude/deep-plan/` and is never git-tracked.
+This repo is a Claude Code marketplace that ships exactly one plugin (`deep-plan`). The repo root is also the plugin root. Runtime data lives at `$XDG_STATE_HOME/deep-plan/` (default `~/.local/state/deep-plan/`) and is never git-tracked.
 
 ```
-~/gits/plan-modes/deep-plan/                   # source of truth, git-tracked
-README.md                                       # this file
-PLAN.md                                         # the implementation plan
-install.py                                      # one-shot setup
+claude-better-plan/                              # repo root = plugin root = marketplace root
+.claude-plugin/
+  plugin.json                                    # plugin manifest
+  marketplace.json                               # single-plugin marketplace manifest
+README.md                                        # this file
+PLAN.md                                          # design rationale
 skills/deep-plan/
-  SKILL.md                                      # entry point, orchestration body
+  SKILL.md                                       # entry point, orchestration body
   hooks/
-    guard_writes.py                             # PreToolUse, write-path enforcement
-    cleanup.py                                  # Stop, sandbox + state cleanup
+    guard_writes.py                              # PreToolUse, write-path enforcement
+    cleanup.py                                   # Stop, sandbox + state cleanup
   scripts/
-    setup_session.py                            # Phase 0 bootstrap
-    resolve_slug.py                             # Phase 4 slug normalise + collision check
-    finalize_plan.py                            # Phase 5 mirror + validation
+    setup_session.py                             # Phase 0 bootstrap
+    resolve_slug.py                              # Phase 4 slug normalise + collision check
+    finalize_plan.py                             # Phase 5 validation + harness mirror
   references/
     phase-prompts.md
     perspectives.md
@@ -79,13 +90,10 @@ agents/
   dp-source-ingest.md
   dp-plan-perspective.md
 
-~/.claude/                                      # Claude Code discovery + runtime data
-skills/deep-plan -> ~/gits/plan-modes/deep-plan/skills/deep-plan
-agents/dp-*.md  -> ~/gits/plan-modes/deep-plan/agents/dp-*.md  (one each)
-deep-plan/                                      # runtime, never symlinked
-  projects.json                                 # per-project plans_dir map
-  hook-errors.log                               # append-only hook exceptions
-  state/<session_id>.json                       # per-session state
+$XDG_STATE_HOME/deep-plan/                       # runtime, auto-created on first /deep-plan run
+  projects.json                                  # per-project plans_dir map
+  hook-errors.log                                # append-only hook exceptions
+  state/<session_id>.json                        # per-session state
 ```
 
 ## Key invariants
@@ -98,7 +106,7 @@ deep-plan/                                      # runtime, never symlinked
 
 ## Configuration
 
-`~/.claude/deep-plan/projects.json` maps absolute project root paths to their `plans_dir`. First run per project prompts via `AskUserQuestion`:
+`$XDG_STATE_HOME/deep-plan/projects.json` (default `~/.local/state/deep-plan/projects.json`) maps absolute project root paths to their `plans_dir`. First run per project prompts via `AskUserQuestion`:
 
 1. `<repo>/.claude/plans/` (Recommended)
 2. `<repo>/plans/`
@@ -117,11 +125,6 @@ The `PreToolUse` hook (`guard_writes.py`) enforces write-path policy: only the c
 
 This is best-effort against accidents, not a true sandbox. A determined model can construct bash that evades the regex (heredocs, `tr` tricks). Strong read-only enforcement comes from `permissionMode: plan` on the subagents, where most actual research happens.
 
-## Plugin migration (v2)
-
-The `~/gits/plan-modes/deep-plan/` subfolder is plugin-shaped. To convert to a plugin: rename to `~/personal-claude-marketplace/plugins/deep-plan/`, add `.claude-plugin/plugin.json`, add a `marketplace.json` to the parent, register the marketplace in `~/.claude/settings.json` under `extraKnownMarketplaces`. No logic change in any of the agent files, hook scripts, or skill body.
-
 ## See also
 
 - `PLAN.md`: the full design rationale, phase-by-phase semantics, failure-mode catalog, and end-to-end verification checklist.
-- `~/gits/plan-modes/`: parent repo containing the upstream plan-mode prompt ecosystem this skill builds on top of.

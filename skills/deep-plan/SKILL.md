@@ -38,7 +38,7 @@ hooks:
 
 You are operating inside the `/deep-plan` skill. Your job is to co-design a non-trivial plan with the user across six phases, never silently picking between meaningful options. The user is a co-author, not a reviewer.
 
-The full design rationale lives in `~/gits/plan-modes/deep-plan/PLAN.md`. The per-phase prompt fragments live in `references/phase-prompts.md`. The plan-file output skeleton lives in `references/plan-file-template.md`. Read those files when a phase needs more detail than this body covers.
+The full design rationale lives in `${CLAUDE_PLUGIN_ROOT}/PLAN.md`. The per-phase prompt fragments live in `references/phase-prompts.md`. The plan-file output skeleton lives in `references/plan-file-template.md`. Read those files when a phase needs more detail than this body covers.
 
 ## R1: Read-only and verification-sandbox boundary
 
@@ -49,7 +49,7 @@ The ONLY writable paths in this session are:
 1. The custom plan file at `${CUSTOM_PLAN_PATH}` (the canonical plan).
 2. The harness plan file at `${HARNESS_PLAN_PATH}` (mirror, written only in Phase 5 by `finalize_plan.py`).
 3. The sandbox at `${SANDBOX_DIR}` (`/tmp/deep-plan-${SESSION_ID}/`) for transient verification probes.
-4. The session state file at `~/.claude/deep-plan/state/${SESSION_ID}.json` (managed by helper scripts only).
+4. The session state file at `${XDG_STATE_HOME:-~/.local/state}/deep-plan/state/${SESSION_ID}.json` (managed by helper scripts only).
 
 Any other Write, Edit, or NotebookEdit will be blocked by the `PreToolUse` hook and your tool call will fail.
 
@@ -85,7 +85,7 @@ flowchart TD
 3. **Bootstrap session state**:
 
    ```
-   python3 ~/.claude/skills/deep-plan/scripts/setup_session.py \
+   python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
      --harness-plan-path <ABS_PATH> --session-id <SESSION_ID>
    ```
 
@@ -204,7 +204,7 @@ Construct slug from `{user_intent_keywords, top_2_decision_choices}`. Format `[a
 Run:
 
 ```
-python3 ~/.claude/skills/deep-plan/scripts/resolve_slug.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/resolve_slug.py \
   --slug <s> --plans-dir <d>
 ```
 
@@ -213,7 +213,7 @@ Returns either accepted slug or collision metadata. On collision, follow R3 (Pha
 ### 4.2 Update state
 
 ```
-python3 ~/.claude/skills/deep-plan/scripts/setup_session.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
   --update custom_plan_path=<plans_dir>/<slug>.md --session-id <SESSION_ID>
 ```
 
@@ -225,7 +225,7 @@ Launch 1 to 3 `dp-plan-perspective` agents (inherit) in parallel. Pick perspecti
 
 ### 4.4 Synthesis
 
-Merge perspectives into a single plan body using `references/plan-file-template.md` as the skeleton. Write the file to `custom_plan_path`. The first line MUST be `<!-- deep-plan-version: 1 -->`.
+Merge perspectives into a single plan body using `references/plan-file-template.md` as the skeleton. Write the file to `custom_plan_path`.
 
 **Merge rules**:
 
@@ -271,11 +271,11 @@ The "approve" branch leads to Phase 5. Other branches loop back: refine/drop/add
 1. Validate and mirror:
 
    ```
-   python3 ~/.claude/skills/deep-plan/scripts/finalize_plan.py \
+   python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/finalize_plan.py \
      --custom <custom_plan_path> --harness <harness_plan_path>
    ```
 
-   The script validates required sections (Context, Decisions made, Tasks with all subsections, References, Open questions), copies the canonical to the harness path so `ExitPlanMode` reads the right content, and (if the canonical starts with `<!-- deep-plan-version:`) mirrors it to `~/gits/plan-modes/deep-plan/PLAN.md`.
+   The script validates required sections (Context, Decisions made, Tasks with all subsections, References, Open questions) and copies the canonical to the harness path so `ExitPlanMode` reads the right content.
 
 2. **On `ok`**: call `ExitPlanMode` with no parameters.
 

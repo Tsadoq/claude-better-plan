@@ -6,10 +6,12 @@ Two modes:
 1. Bootstrap (initial call):
        setup_session.py --harness-plan-path <PATH> --session-id <ID>
    Resolves project root via `git rev-parse --show-toplevel` (falls back to
-   cwd with `no_git=true` sentinel), reads ~/.claude/deep-plan/projects.json
-   to find the project's plans_dir (returns `prompt_for_plans_dir=true`
-   sentinel and four candidate options if first time), writes the per-session
-   state file, and creates the /tmp/deep-plan-<session_id>/ sandbox.
+   cwd with `no_git=true` sentinel), reads
+   $XDG_STATE_HOME/deep-plan/projects.json (default
+   ~/.local/state/deep-plan/projects.json) to find the project's plans_dir
+   (returns `prompt_for_plans_dir=true` sentinel and four candidate options
+   if first time), writes the per-session state file, and creates the
+   /tmp/deep-plan-<session_id>/ sandbox.
 
 2. Update (subsequent calls):
        setup_session.py --update key=value --session-id <ID>
@@ -31,9 +33,58 @@ from pathlib import Path
 from typing import Any
 
 HOME = Path.home()
-RUNTIME_DIR = HOME / ".claude" / "deep-plan"
+
+
+def _runtime_dir() -> Path:
+    raw = os.environ.get("XDG_STATE_HOME")
+    base = Path(raw) if raw else HOME / ".local" / "state"
+    return base / "deep-plan"
+
+
+RUNTIME_DIR = _runtime_dir()
 STATE_DIR = RUNTIME_DIR / "state"
 PROJECTS_JSON = RUNTIME_DIR / "projects.json"
+HOOK_ERROR_LOG = RUNTIME_DIR / "hook-errors.log"
+LEGACY_RUNTIME_DIR = HOME / ".claude" / "deep-plan"
+
+
+def ensure_runtime_dirs() -> None:
+    """Self-bootstrap runtime layout. Replaces the old install.py step.
+
+    Also performs a one-shot migration from ~/.claude/deep-plan/ to the new
+    XDG location if the new dir is empty and the legacy dir has content.
+    """
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    if not PROJECTS_JSON.exists():
+        PROJECTS_JSON.write_text("{}\n")
+    if not HOOK_ERROR_LOG.exists():
+        HOOK_ERROR_LOG.touch()
+    _maybe_migrate_legacy()
+
+
+def _maybe_migrate_legacy() -> None:
+    if not LEGACY_RUNTIME_DIR.exists() or LEGACY_RUNTIME_DIR == RUNTIME_DIR:
+        return
+    breadcrumb = RUNTIME_DIR / "MIGRATED.txt"
+    if breadcrumb.exists():
+        return
+    try:
+        legacy_projects = LEGACY_RUNTIME_DIR / "projects.json"
+        if legacy_projects.exists() and PROJECTS_JSON.read_text().strip() in ("", "{}"):
+            PROJECTS_JSON.write_text(legacy_projects.read_text())
+        legacy_state = LEGACY_RUNTIME_DIR / "state"
+        if legacy_state.is_dir():
+            for f in legacy_state.glob("*.json"):
+                target = STATE_DIR / f.name
+                if not target.exists():
+                    target.write_text(f.read_text())
+        breadcrumb.write_text(
+            f"Migrated from {LEGACY_RUNTIME_DIR} on {utcnow()}.\n"
+            "Legacy dir left intact; safe to delete manually.\n"
+        )
+    except Exception:
+        pass
 
 PERMITTED_UPDATE_KEYS = {
     "plans_dir",
@@ -144,6 +195,7 @@ def ensure_sandbox(session_id: str) -> Path:
 
 
 def cmd_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
+    ensure_runtime_dirs()
     cwd = Path.cwd()
     project_root, no_git = detect_project_root(cwd)
     projects = load_projects()
@@ -185,6 +237,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def cmd_update(args: argparse.Namespace) -> dict[str, Any]:
+    ensure_runtime_dirs()
     state = read_state(args.session_id)
     if not state:
         return {"ok": False, "error": f"no state for session_id={args.session_id}"}

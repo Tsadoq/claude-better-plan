@@ -7,21 +7,31 @@ and matches Bash commands against a regex of write side-effect patterns
 unless the command literal contains the sandbox path.
 
 Fail-open on any internal error: the hook prints nothing, exits 0, and
-appends the exception to ~/.claude/deep-plan/hook-errors.log. Read the
-log to debug; an empty log means the hook is healthy.
+appends the exception to $XDG_STATE_HOME/deep-plan/hook-errors.log
+(default ~/.local/state/deep-plan/hook-errors.log). Read the log to
+debug; an empty log means the hook is healthy.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
 from typing import NoReturn
 
-STATE_DIR = Path.home() / ".claude" / "deep-plan" / "state"
+
+def _runtime_dir() -> Path:
+    raw = os.environ.get("XDG_STATE_HOME")
+    base = Path(raw) if raw else Path.home() / ".local" / "state"
+    return base / "deep-plan"
+
+
+RUNTIME_DIR = _runtime_dir()
+STATE_DIR = RUNTIME_DIR / "state"
 ALLOWED_STATE_PATH_PREFIX = STATE_DIR
-ERROR_LOG = Path.home() / ".claude" / "deep-plan" / "hook-errors.log"
+ERROR_LOG = RUNTIME_DIR / "hook-errors.log"
 
 WRITEY_BASH = re.compile(
     r"(>>?[^&]|"

@@ -6,9 +6,7 @@ Usage:
 
 Validates that the custom plan file has every required section in the
 right order. On success, copies the canonical to the harness mirror so
-ExitPlanMode reads the right content. If the canonical begins with the
-`<!-- deep-plan-version: ... -->` marker, also mirrors it to
-~/gits/plan-modes/deep-plan/PLAN.md as the source-of-truth design doc.
+ExitPlanMode reads the right content.
 
 Returns a JSON blob with `ok` and a list of validation errors.
 """
@@ -39,12 +37,6 @@ REQUIRED_TASK_SUBSECTIONS = [
     "**Verification**",
     "**Depends on**",
 ]
-
-VERSION_MARKER = "<!-- deep-plan-version:"
-SOURCE_PLAN_MIRROR = (
-    Path.home() / "gits" / "plan-modes" / "deep-plan" / "PLAN.md"
-)
-
 
 def validate_section_order(text: str) -> list[str]:
     errors: list[str] = []
@@ -127,7 +119,6 @@ def main() -> int:
         "ok": False,
         "validation_errors": [],
         "harness_path_written": False,
-        "source_mirror_written": False,
         "custom": str(custom),
         "harness": str(harness),
     }
@@ -148,16 +139,6 @@ def main() -> int:
     harness.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(custom, harness)
     result["harness_path_written"] = True
-
-    if text.lstrip().startswith(VERSION_MARKER):
-        SOURCE_PLAN_MIRROR.parent.mkdir(parents=True, exist_ok=True)
-        if custom != SOURCE_PLAN_MIRROR.resolve():
-            shutil.copyfile(custom, SOURCE_PLAN_MIRROR)
-            result["source_mirror_written"] = True
-        else:
-            result["source_mirror_written"] = False
-            result["source_mirror_skipped"] = "custom is already the source mirror"
-        result["source_mirror"] = str(SOURCE_PLAN_MIRROR)
 
     result["ok"] = True
     print(json.dumps(result, indent=2, sort_keys=True))
