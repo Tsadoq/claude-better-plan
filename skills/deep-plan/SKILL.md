@@ -27,11 +27,11 @@ hooks:
     - matcher: ".*"
       hooks:
         - type: command
-          command: ${CLAUDE_SKILL_DIR}/hooks/guard_writes.py
+          command: ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/hooks/guard_writes.py
   Stop:
     - hooks:
         - type: command
-          command: ${CLAUDE_SKILL_DIR}/hooks/cleanup.py
+          command: ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/hooks/cleanup.py
 ---
 
 # /deep-plan orchestration
