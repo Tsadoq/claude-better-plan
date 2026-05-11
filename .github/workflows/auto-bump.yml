@@ -1,0 +1,105 @@
+# Auto-bump plugin version on push to main, driven by Conventional Commits.
+#
+# - `feat!:` / `fix!:` / `BREAKING CHANGE:` in commit body  -> major
+# - `feat:`                                                 -> minor
+# - `fix:` / `perf:`                                        -> patch
+# - anything else (docs/chore/refactor/test/ci/style)       -> no bump
+#
+# The job writes a `chore(release): vX.Y.Z [skip ci]` commit, tags it, and
+# pushes both. Pushes made with GITHUB_TOKEN do not retrigger workflows, and
+# the `[skip ci]` marker is added as belt-and-suspenders.
+#
+# First run on a repo with no tags will bootstrap a tag at the current
+# plugin.json version without bumping, so the very first auto-run starts
+# from a clean baseline.
+
+name: auto-bump
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Bootstrap initial tag if missing
+        id: bootstrap
+        run: |
+          set -euo pipefail
+          if git describe --tags --abbrev=0 >/dev/null 2>&1; then
+            echo "tagged=true" >>"$GITHUB_OUTPUT"
+          else
+            CURRENT=$(python3 -c "import json; print(json.load(open('.claude-plugin/plugin.json'))['version'])")
+            echo "No prior tag. Bootstrapping v${CURRENT} at HEAD"
+            git tag "v${CURRENT}"
+            git push origin "v${CURRENT}"
+            echo "tagged=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Determine bump level
+        if: steps.bootstrap.outputs.tagged == 'true'
+        id: bump
+        run: |
+          set -euo pipefail
+          LAST_TAG=$(git describe --tags --abbrev=0)
+          RANGE="${LAST_TAG}..HEAD"
+          echo "Inspecting commits in ${RANGE}:"
+          git log "$RANGE" --pretty='  %h %s' || true
+          LEVEL=none
+          if git log "$RANGE" --pretty=%s | grep -Eq '^[a-z]+(\([^)]+\))?!:'; then
+            LEVEL=major
+          elif git log "$RANGE" --pretty=%B | grep -Eq '^BREAKING[- ]CHANGE:'; then
+            LEVEL=major
+          elif git log "$RANGE" --pretty=%s | grep -Eq '^feat(\([^)]+\))?:'; then
+            LEVEL=minor
+          elif git log "$RANGE" --pretty=%s | grep -Eq '^(fix|perf)(\([^)]+\))?:'; then
+            LEVEL=patch
+          fi
+          echo "Bump level: ${LEVEL}"
+          echo "level=${LEVEL}" >>"$GITHUB_OUTPUT"
+
+      - name: Apply bump
+        if: steps.bump.outputs.level != '' && steps.bump.outputs.level != 'none'
+        run: |
+          set -euo pipefail
+          NEW=$(LEVEL="${{ steps.bump.outputs.level }}" python3 <<'PY'
+          import json
+          import os
+          import pathlib
+
+          path = pathlib.Path(".claude-plugin/plugin.json")
+          data = json.loads(path.read_text())
+          major, minor, patch = (int(x) for x in data["version"].split("."))
+          level = os.environ["LEVEL"]
+          if level == "major":
+              major, minor, patch = major + 1, 0, 0
+          elif level == "minor":
+              minor, patch = minor + 1, 0
+          else:
+              patch += 1
+          new = f"{major}.{minor}.{patch}"
+          data["version"] = new
+          path.write_text(json.dumps(data, indent=2) + "\n")
+          print(new)
+          PY
+          )
+          echo "New version: v${NEW}"
+          git add .claude-plugin/plugin.json
+          git commit -m "chore(release): v${NEW} [skip ci]"
+          git tag "v${NEW}"
+          git push origin HEAD:main
+          git push origin "v${NEW}"
