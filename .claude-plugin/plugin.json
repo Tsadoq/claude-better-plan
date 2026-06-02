@@ -1,6 +1,6 @@
 {
   "name": "deep-plan",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Replaces default plan mode for non-trivial work: triangulated research, AskUserQuestion-driven decisions, deep web research per branch, and an AI-consumable plan file.",
   "author": { "name": "tsadoq" },
   "homepage": "https://github.com/tsadoq/claude-better-plan",

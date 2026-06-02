@@ -1,0 +1,35 @@
+# Quality gates for the deep-plan plugin: lint, type-check, then test.
+# Coexists with auto-bump.yml (which only handles versioning).
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # Skip the auto-bump release commit; it only touches plugin.json.
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # ruff and mypy are dev-only tools, not plugin runtime deps; pytest is the
+      # test runner. The plugin scripts themselves are stdlib-only.
+      - name: Install lint/type/test tools
+        run: pip install ruff mypy pytest
+
+      - name: Lint (ruff)
+        run: ruff check skills/deep-plan
+
+      - name: Type-check (mypy --strict)
+        run: mypy --strict skills/deep-plan/scripts skills/deep-plan/hooks
+
+      - name: Test (pytest)
+        run: python -m pytest skills/deep-plan/tests -v

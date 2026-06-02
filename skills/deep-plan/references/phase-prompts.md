@@ -7,6 +7,11 @@ Long-form per-phase prompts the orchestrator quotes into context as needed. The 
 ```
 You are at the start of /deep-plan. Before doing anything else:
 
+0. Parse $ARGUMENTS for the optional `slug:<value>` and `depth:<shallow|standard|exhaustive>`
+   tokens (the harness has no native key:value parser). Default depth=standard. The rest of
+   $ARGUMENTS is the topic. Every per-phase cap below is read from the "Depth scaling" table
+   in SKILL.md; where a fragment gives a number, treat it as the standard-depth value.
+
 1. Check the most recent system reminder. If it does NOT contain "Plan mode is active.",
    call EnterPlanMode and stop. The next user turn re-enters this skill in plan mode.
 
@@ -16,7 +21,7 @@ You are at the start of /deep-plan. Before doing anything else:
 3. Run setup_session.py to bootstrap session state:
        python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
          --harness-plan-path <ABS_PATH> \
-         --session-id <SESSION_ID>
+         --session-id ${CLAUDE_SESSION_ID}
 
    The script returns a JSON blob describing the resolved project root, plans_dir, and
    sandbox path, plus optional sentinels:
@@ -31,7 +36,7 @@ You are at the start of /deep-plan. Before doing anything else:
 
    The default MUST NOT be ~/.claude/plans/. Persist the user's choice via:
        python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
-         --update plans_dir=<ABS_PATH> --session-id <SESSION_ID>
+         --update plans_dir=<ABS_PATH> --session-id ${CLAUDE_SESSION_ID}
 
 5. After state is bootstrapped, print a single short status sentence to the user and
    proceed to Phase 1. Do not narrate Phase 0's mechanics.
@@ -41,7 +46,8 @@ You are at the start of /deep-plan. Before doing anything else:
 
 ```
 Goal: build a shared evidence base from three independent angles before any decision
-is taken. Launch up to three subagents in a single message:
+is taken. Launch up to three subagents in a single message (fan-out scales by depth per
+the SKILL.md Depth scaling table; shallow runs explore + shallow only):
 
 - dp-explore-codebase  (haiku, always)
 - dp-research-shallow  (haiku, always)
@@ -123,9 +129,11 @@ citations.
 
 Launch one dp-research-deep agent per decision branch IN PARALLEL in a single message.
 Cap at 4 parallel instances. If more than 4 decisions need research, batch in waves of 4.
+Depth scales this (SKILL.md table): shallow skips Phase 3 entirely; exhaustive runs
+multiple waves and does not skip while any novelty remains.
 
 Skip Phase 3 entirely if all Phase 2 decisions selected the obvious "follows existing
-convention" option (no novel libraries to research).
+convention" option (no novel libraries to research), or whenever depth=shallow.
 
 Inputs to each agent:
 - decision: short name from Phase 2
@@ -156,16 +164,22 @@ Sub-steps in order:
          --slug <s> --plans-dir <d>
    - On collision, follow the section "Slug generation and collision handling" in PLAN.md.
 
-2. Update state with the resolved custom_plan_path:
+2. Record the archive path (the on-approval copy destination; the working file
+   stays the harness plan path):
        python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
-         --update custom_plan_path=<plans_dir>/<slug>.md --session-id <SESSION_ID>
+         --update archive_plan_path=<plans_dir>/<slug>.md --session-id ${CLAUDE_SESSION_ID}
 
-3. Perspective fan-out: launch 1 to 3 dp-plan-perspective agents in parallel. Pick from
+3. Perspective fan-out: launch dp-plan-perspective agents in parallel. Count scales by
+   depth (SKILL.md table): shallow=1, standard=1 to 3, exhaustive=3. Pick from
    {simplicity, performance, maintainability, minimal-diff, security} per the user's
    evident priorities. See references/perspectives.md for selection heuristics.
 
 4. Synthesis: merge perspectives into a single plan body using
-   references/plan-file-template.md as the skeleton.
+   references/plan-file-template.md as the skeleton. Write it directly to the
+   harness plan file (the canonical plan). Include the **Tests (TDD)** subsection
+   only for tasks that produce or modify code; omit it for markdown, docs, or
+   config tasks. Append the Phase 3 dossiers verbatim under a ## Research dossiers
+   appendix so they survive into the archive.
    Merge rules:
    - When perspectives disagree on task ordering or test scope, prefer the union (additive).
    - When perspectives disagree on architectural choice, that means a sub-decision was
@@ -181,8 +195,36 @@ Sub-steps in order:
    Probes run sequentially for deterministic ordering. Probes that need to write
    fixtures write under the sandbox; the hook permits this.
 
-After all sub-steps, present Checkpoint 2:
-    Q: "Plan written to <custom_plan_path>. What next?"
+After all sub-steps, proceed to Phase 4.6 (adversarial critique) before Checkpoint 2.
+```
+
+## Phase 4.6: Adversarial critique
+
+```
+Goal: try to refute the synthesized plan before the user is asked to approve it.
+
+Launch one dp-plan-critic (inherit) with: the synthesized plan body, the ## Decisions made
+table, the Phase 1 evidence, and the Phase 3 dossiers. It returns findings under
+## Missing tasks, ## Wrong or missing dependencies, ## Code tasks lacking tests,
+## Decisions contradicted by research, and ## Untested assumptions, each tagged
+material|minor, plus a one-line ## Verdict.
+
+Count and loop bound scale by depth (SKILL.md Depth scaling table):
+- shallow:    one quick pass, no loop.
+- standard:   one pass, loop back at most once if material findings remain.
+- exhaustive: re-run until a pass has no material findings, capped at 3 rounds.
+
+Act on findings:
+- Material finding that reverses a user decision -> loop back to Phase 2 for that decision,
+  quoting the critic's contradiction in the new AskUserQuestion. Never reverse it silently.
+- Other material findings -> fix inline in the plan body (add the missing task, fix
+  **Depends on**, add the missing **Tests (TDD)** block, add a verification probe), then
+  re-run the critic if the depth loop bound allows.
+- Minor findings -> append to ## Open questions (kept genuinely deferrable, since a
+  non-empty ## Open questions blocks /deep-plan:deep-plan-execute later).
+
+When the loop bound is reached or no material findings remain, present Checkpoint 2:
+    Q: "Plan written to <harness_plan_path>. What next?"
     Header: "Plan review"
     Options:
       1. "Approve and exit plan mode" (Recommended)
@@ -197,27 +239,30 @@ The "approve" branch leads to Phase 5. Other branches loop back appropriately.
 ## Phase 5: ExitPlanMode and handoff
 
 ```
-1. Run finalize_plan.py:
+1. Repair the plan in place (before approval):
        python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/finalize_plan.py \
-         --custom <custom_plan_path> --harness <harness_plan_path>
+         --repair --plan <harness_plan_path>
 
-   The script:
-   - Validates required sections present (Context, Decisions made, Tasks with all
-     subsections, References, Open questions).
-   - Copies custom_plan_path to harness_plan_path so ExitPlanMode reads the right file.
-   - Returns "ok" or a list of validation failures.
+   finalize_plan.py auto-repairs the plan (em-dashes, task headers, missing
+   sections and task subsections inserted as n/a, attribution stripped) and
+   prints {ok, fixes, warnings}. It does NOT reject a normal plan: it repairs in
+   one pass. Paraphrase any non-empty fixes/warnings to the user in two or three
+   lines (for example, a code task missing its **Tests (TDD)** block). Only
+   ok=false (empty plan, or no tasks at all) warrants looping back to Phase 4.
 
-2. On "ok": call ExitPlanMode with no parameters.
+2. Request approval: call ExitPlanMode with no parameters. It reads the repaired
+   harness plan file.
 
-3. On validation failure: surface failures via AskUserQuestion and loop back to Phase 4.
+3. On approval (system-reminder-exited-plan-mode fires): write the persistence
+   copy and split appendices into siblings, then emit EXACTLY the handoff message:
+       python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/finalize_plan.py \
+         --archive --plan <harness_plan_path> --plans-dir <plans_dir> --slug <slug>
 
-4. On approval (system-reminder-exited-plan-mode fires): emit EXACTLY this message
-   and stop the turn:
-
-       Plan approved and written to {custom_plan_path}.
+       Plan approved and written to {plans_dir}/{slug}.md (with .research.md and
+       .probes.md siblings when present).
 
        Recommended next: run `/compact` (or `/clear` if you do not need any planning
-       context preserved). The plan file is the canonical input for implementation;
+       context preserved). The lean plan file is the canonical input for implementation;
        the planning chatter (agent dossiers, perspective drafts, decision option sets)
        is no longer needed and consumes context.
 

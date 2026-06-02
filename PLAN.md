@@ -2,7 +2,133 @@
 
 # Deep Plan Mode for Claude Code
 
-## Context
+`/deep-plan` is a slash-invoked replacement for Claude Code's built-in plan mode, shipped as the `deep-plan` plugin. It co-designs a non-trivial plan with the user across seven phases, never silently picking between meaningful options, then hands the finished plan to a companion `/deep-plan:deep-plan-execute` command that builds it test-first.
+
+This document describes the **current design** (v0.2 of the plugin, plus the v0.3 power features). The original v0.1 design is preserved verbatim under `## History (v0.1)` at the end, for rationale only. Where the two conflict, the text above the History heading wins.
+
+## What it does
+
+- Fans research three ways in parallel in Phase 1 (codebase, light web, user-provided sources).
+- Surfaces every meaningful sub-decision as a 3-to-5-option `AskUserQuestion`. Never silently picks.
+- Does targeted deep web research per chosen option in Phase 3, opportunistically using ambient MCP documentation tools when the session exposes them.
+- Runs an adversarial critique (Phase 4.6) that tries to refute the plan before the user approves it.
+- Produces an AI-consumable plan file: descriptive slug, structured headings, `TaskCreate`-loadable, code-only TDD embedded.
+- Saves the plan to a user-chosen project-local location (default `<repo>/.claude/plans/`), never `~/.claude/plans/`.
+- A `depth:` argument scales fan-out and effort, from a fast single pass to an exhaustive multi-wave run.
+
+The user is a co-author of the plan, not a reviewer.
+
+## Phase workflow
+
+```mermaid
+flowchart TD
+    Args["/deep-plan slug:x depth:shallow|standard|exhaustive ..."] --> P0
+    P0[Phase 0: Bootstrap<br/>parse depth+slug, set effort, session state] --> P1[Phase 1: Parallel triangulation]
+    P1 --> CP1{Checkpoint 1<br/>scope confirm}
+    CP1 -->|reframe| P1
+    CP1 -->|confirm| P2[Phase 2: Decision surfacing]
+    P2 --> P3[Phase 3: Targeted deep research<br/>+ ambient MCP doc tools]
+    P3 -->|contradiction| P2
+    P3 --> P4[Phase 4: Synthesis & verification]
+    P4 --> P46[Phase 4.6: Adversarial critique<br/>dp-plan-critic refutes the plan]
+    P46 -->|material gaps| P4
+    P46 -->|reverses a decision| P2
+    P46 -->|clean| CP2{Checkpoint 2<br/>walk plan}
+    CP2 -->|refine/drop/add| P4
+    CP2 -->|change decision| P2
+    CP2 -->|approve| P5[Phase 5: repair + ExitPlanMode + archive]
+    P5 --> Exec["/deep-plan:deep-plan-execute<br/>load_tasks.py -> TaskCreate -> addBlockedBy -> TDD loop"]
+```
+
+### Phase 0: Bootstrap
+
+Parse `$ARGUMENTS` for the optional `slug:` and `depth:` tokens (the harness has no native key:value parser); the remainder is the topic. Detect plan mode (auto-enter if needed), capture the harness-issued plan file path, run `setup_session.py` to resolve the project root and `plans_dir` (prompting once per project), and create the per-session sandbox.
+
+### Phase 1: Parallel triangulation
+
+Launch `dp-explore-codebase` (haiku) and `dp-research-shallow` (haiku) always, plus `dp-source-ingest` (sonnet) when the user supplied source material. Synthesize the findings and confirm scope with the user at Checkpoint 1.
+
+### Phase 2: Decision surfacing
+
+Enumerate 2 to 5 sub-decisions worth surfacing, generate option sets inline, and resolve them sequentially in dependency order via `AskUserQuestion`, persisting each answer to the plan's `## Decisions made` table as it resolves.
+
+### Phase 3: Targeted deep research
+
+Launch one `dp-research-deep` (sonnet) per decision branch, capped at 4 in parallel (waves of 4). A `## Contradiction` in any dossier loops back to Phase 2 for that one decision with the evidence quoted. Skipped entirely when no novelty needs research (or at `depth: shallow`).
+
+### Phase 4: Synthesis and verification
+
+Generate the slug, launch 1 to 3 `dp-plan-perspective` drafts (simplicity, performance, maintainability, minimal-diff, security), merge them into the plan body, and run inline verification probes (writing any fixtures into the sandbox).
+
+### Phase 4.6: Adversarial critique
+
+Launch `dp-plan-critic` to refute the synthesized plan: missing tasks, wrong or missing dependencies, code tasks lacking tests, decisions contradicted by research, and untested assumptions, each tagged `material` or `minor`. Material findings are fixed inline (or, if they reverse a user decision, loop back to Phase 2 with the contradiction quoted); minor findings go to `## Open questions`. Then Checkpoint 2 walks the plan with the user (approve / refine / drop / add / change a decision).
+
+### Phase 5: ExitPlanMode and handoff
+
+`finalize_plan.py --repair` auto-normalizes the plan in place, then `ExitPlanMode` requests approval. On approval, `finalize_plan.py --archive` writes the lean `plans_dir/<slug>.md` plus `<slug>.probes.md` and `<slug>.research.md` siblings, and the orchestrator recommends the user run `/compact` before handing the plan to `/deep-plan:deep-plan-execute`.
+
+## Depth control
+
+`depth: shallow | standard | exhaustive` (default `standard`) is parsed in Phase 0 and read by every later phase. It also maps to the native `effort` field.
+
+| Aspect | shallow | standard (default) | exhaustive |
+|--------|---------|--------------------|------------|
+| Phase 1 fan-out | explore + shallow (source-ingest if sources) | explore + shallow (+ source-ingest) | same, may re-run on weak evidence |
+| Phase 3 deep research | skip entirely | one per decision, cap 4, waves of 4 | multiple waves, never skip when novelty exists |
+| Phase 4 perspectives | 1 | 1 to 3 | 3 |
+| Phase 4.6 critique | 1 quick pass, no loop | 1 pass, loop once on material findings | loop until no material findings (cap 3) |
+| `effort` | low to medium | inherit | high to xhigh |
+
+## Implementation handoff
+
+`/deep-plan:deep-plan-execute [plan-file-path]` is a companion skill in the same plugin. It runs `load_tasks.py` to parse the finalized plan's `## Tasks` into structured JSON, refuses to start while `## Open questions` is non-empty, then performs a two-pass load against the harness Task API: pass 1 creates one task per `### Task` (`TaskCreate`), capturing the returned opaque id into an `int -> id` map; pass 2 wires each task's `Depends on` into `addBlockedBy` (`TaskUpdate`). It then drives a test-first loop task by task in dependency order: write the failing test, implement, run the task's verification command. Requires Claude Code >= v2.1.142 for the Task dependency API.
+
+`load_tasks.py` reuses the section-slicing helpers (`_header_pos`, `_section_end`, `_section_body`) from `finalize_plan.py` rather than re-implementing them.
+
+## Read-only enforcement (current model)
+
+The orchestrator is read-only because it runs in plan mode. The subagents are **not** held read-only by `permissionMode` -- the harness ignores `permissionMode`, `hooks`, and `mcpServers` on plugin-bundled agents. Instead each `dp-*` agent declares a `disallowedTools` list that blocks `Write`, `Edit`, and `NotebookEdit`, reinforced by a read-only system prompt. The research agents (`dp-research-shallow`, `dp-research-deep`, `dp-source-ingest`) also disallow `Bash`, so they have no shell write vector at all; `dp-explore-codebase`, `dp-plan-perspective`, and `dp-plan-critic` keep `Bash` for read-only inspection. That residual Bash is a theoretical write vector, mitigated by the prompt and the trusted-session model, not a hard sandbox.
+
+Dropping the old `tools` allowlist for `disallowedTools` is also what lets the agents reach any ambient MCP documentation tools during research; an explicit `tools` allowlist would have stripped MCP access.
+
+The v0.1 bundled write-guard (`guard_writes.py`, a `PreToolUse` hook) has been removed. Plan mode plus `disallowedTools` are the boundary; only the `Stop` cleanup hook remains.
+
+## Plan file shape
+
+There is a single canonical plan file: the harness-issued plan path. There is no custom-file-plus-mirror dance; the project-local `<slug>.md` is an on-approval copy written by `finalize_plan.py --archive`. The section order is fixed -- Context, Decisions made, Architecture, Tasks, References, Open questions -- plus `## Verification probes` and `## Research dossiers` appendices that are split into sibling files on archive so the implementer file stays lean. Each task carries Target files, Change, Verification, and Depends on; the `**Tests (TDD)**` subsection is included only for tasks that create or modify code. `finalize_plan.py --repair` auto-repairs the plan (em-dashes, task headers, missing sections, attribution) rather than validating-and-rejecting in a loop.
+
+## Engineering
+
+Every helper is stdlib-only Python (`setup_session.py`, `resolve_slug.py`, `finalize_plan.py`, `load_tasks.py`, and the `cleanup.py` Stop hook), ruff-clean and `mypy --strict` compliant, with no runtime dependencies. CI (`.github/workflows/ci.yml`) installs `ruff`, `mypy`, and `pytest`, then runs, in order, `ruff check skills/deep-plan`, `mypy --strict skills/deep-plan/scripts skills/deep-plan/hooks`, and the test suite. `pyproject.toml` pins the gate configuration. Tests under `skills/deep-plan/tests/` cover the golden-plan drift guard, repair/archive, session state and migration, slug normalisation and collision, the cleanup hook, the read-only agents contract, the `load_tasks` parser, and the SKILL.md frontmatter/wiring contract.
+
+## Runtime layout
+
+The repo root is the plugin root and the marketplace root. Runtime data lives under `$XDG_STATE_HOME/deep-plan/` (default `~/.local/state/deep-plan/`): `projects.json` (per-project `plans_dir` map), `state/<session_id>.json` (per-session state), and `hook-errors.log`. None of it is git-tracked. (The v0.1 `~/gits/plan-modes` source-of-truth subfolder, the `install.py` symlink step, and the `~/.claude/deep-plan/` location are superseded; `setup_session.py` self-bootstraps the runtime dirs and performs a one-shot migration from the legacy location.)
+
+## Change log
+
+v0.2 (refactor of the v0.1 design below):
+
+1. **Auto-repair finalize.** `finalize_plan.py` auto-repairs the plan body in one pass and reports `{ok, fixes, warnings}` instead of validating-and-rejecting in a loop. Supersedes the `--custom/--harness` interface.
+2. **Harness-canonical plan file.** The orchestrator writes the plan directly to the harness plan path; the project-local `<slug>.md` is an on-approval copy. Supersedes the post-approval mirror.
+3. **Lean plan plus siblings.** The Verification probes and Research dossiers appendices split into `<slug>.probes.md` and `<slug>.research.md` on approval.
+4. **Write-guard removed.** `guard_writes.py` and its `PreToolUse` hook are gone; plan mode plus `disallowedTools` are the read-only boundary.
+5. **Code-only TDD.** The `**Tests (TDD)**` subsection is included only for code tasks.
+
+v0.3 (power features, deeper research, engineering hardening):
+
+6. **Depth control.** The `depth: shallow|standard|exhaustive` argument scales fan-out, research waves, perspective count, critique loops, and `effort`.
+7. **Adversarial critique.** A new Phase 4.6 launches `dp-plan-critic` to refute the plan before approval.
+8. **Implementation handoff.** The `/deep-plan:deep-plan-execute` companion skill plus `load_tasks.py` turn the plan into harness tasks with dependencies and drive a TDD loop.
+9. **Opportunistic MCP research.** Subagents use `disallowedTools` (not a `tools` allowlist), keeping them write-free while letting them reach ambient MCP documentation tools.
+10. **Engineering floor.** Read-only enforcement re-documented accurately (`disallowedTools`, not `permissionMode`); `ruff` + `mypy --strict` + structural CI gates added; the untested helper scripts backfilled with tests.
+
+## History (v0.1)
+
+> Everything below is the original v0.1 design, preserved for rationale only. It describes superseded machinery -- `custom_plan_path` and the harness/custom mirror, the `guard_writes.py` `PreToolUse` hook, `install.py` and the `~/gits/plan-modes` symlink layout, and the validate-and-reject `finalize_plan`. Where it conflicts with the current design above, the current design wins. Headings in this section are demoted one level so it reads as an appendix.
+
+### Context
 
 The default Claude Code plan mode handles tasks where intent fits in a few sentences and the design space is narrow. It struggles for non-trivial work: tasks that need real research (state of the art, prior art, library trade-offs), tasks that decompose into multiple sub-decisions where the user's taste matters, and tasks where the model would otherwise pick a winner alone.
 
@@ -17,7 +143,7 @@ This plan describes a personal opt-in alternative for one user on Linux, invoked
 
 Intended outcome: a tool that turns blank-page planning into structured interactive co-design. The user is a co-author, not a reviewer.
 
-## Form factor decision
+### Form factor decision
 
 **Skill** as the entry point, with five dedicated subagents at user scope, skill-scoped `PreToolUse` and `Stop` hooks declared in the skill frontmatter, on-disk session state under `~/.claude/deep-plan/state/`, and persistent project config under `~/.claude/deep-plan/projects.json`.
 
@@ -27,7 +153,7 @@ Runtime data (`~/.claude/deep-plan/state/<session_id>.json`, `~/.claude/deep-pla
 
 This layout is **plugin-ready**: if v2 wants versioning, the `~/gits/plan-modes/deep-plan/` folder transplants verbatim into `~/personal-claude-marketplace/plugins/deep-plan/`, with hook references already using `${CLAUDE_SKILL_DIR}` (resolves the same way under both skill and plugin scopes).
 
-### Why skill, not the alternatives
+#### Why skill, not the alternatives
 
 | Alternative | Why rejected |
 |---|---|
@@ -36,17 +162,17 @@ This layout is **plugin-ready**: if v2 wants versioning, the `~/gits/plan-modes/
 | Single mega-subagent via `@dp-orchestrator` | Subagents cannot spawn subagents in Claude Code; the orchestrator must spawn five specialised agents. Structurally impossible. |
 | Slash command (`~/.claude/commands/deep-plan.md`) | Slash commands are deprecated; new convention is to use a skill. Skills are a strict superset (bundle supporting files, scoped hooks, dynamic context injection). |
 
-### Trade-offs accepted
+#### Trade-offs accepted
 
 - No version pinning out of the box. Mitigated by treating `~/.claude/skills/deep-plan/` as a personal git repo.
 - Skill-scoped hook semantics are less documented than plugin-frontmatter hooks. Mitigated by also gating activation on a state file that the hook reads on every `PreToolUse` (no env-var dependence on skill scope).
 - Plugin's distributability lost. Out of scope per spec.
 
-### Migration path to plugin (v2)
+#### Migration path to plugin (v2)
 
 The `~/gits/plan-modes/deep-plan/` subfolder is already plugin-shaped. To convert: rename to `~/personal-claude-marketplace/plugins/deep-plan/`, add a `.claude-plugin/plugin.json` manifest (one file), add a `marketplace.json` to the parent, register the marketplace in `~/.claude/settings.json` under `extraKnownMarketplaces` mirroring the existing `checkmk-marketplace` entry. No logic change in any of the agent files, hook scripts, or skill body.
 
-## High-level workflow
+### High-level workflow
 
 ```mermaid
 flowchart TD
@@ -79,7 +205,7 @@ flowchart TD
     Compact --> Impl["Implementation turn<br/>parses plan, calls TaskCreate"]
 ```
 
-## Repository layout
+### Repository layout
 
 Source of truth lives at `~/gits/plan-modes/deep-plan/`. After running `install.py`, Claude Code sees the artifacts via symlinks under `~/.claude/`. Runtime data lives only under `~/.claude/deep-plan/` and is never git-tracked.
 
@@ -121,7 +247,7 @@ Source of truth lives at `~/gits/plan-modes/deep-plan/`. After running `install.
     └── state/<session_id>.json                 # per-session state, deleted on Stop hook
 ```
 
-## File-by-file artifacts
+### File-by-file artifacts
 
 All paths below are relative to `~/gits/plan-modes/deep-plan/` unless prefixed with `~/.claude/`.
 
@@ -149,7 +275,7 @@ All paths below are relative to `~/gits/plan-modes/deep-plan/` unless prefixed w
 | `~/.claude/deep-plan/hook-errors.log` | Append-only log for hook script exceptions. |
 | `~/.claude/settings.json` | No edits required. Hooks live in skill frontmatter via `${CLAUDE_SKILL_DIR}/hooks/...`, not global settings. |
 
-### README.md content outline
+#### README.md content outline
 
 The README is short (under 300 lines) and is the user's first stop. Required sections:
 
@@ -170,9 +296,9 @@ The README is short (under 300 lines) and is the user's first stop. Required sec
 8. **Plugin migration** (one paragraph): the layout is plugin-ready; v2 conversion is two manifest files and a marketplace registration.
 9. **Link to PLAN.md** for the full design rationale.
 
-## Configuration
+### Configuration
 
-### `~/.claude/deep-plan/projects.json`
+#### `~/.claude/deep-plan/projects.json`
 
 ```json
 {
@@ -192,7 +318,7 @@ The README is short (under 300 lines) and is the user's first stop. Required sec
 - The hard requirement: **default must NEVER be `~/.claude/plans/`**. The first option, the second option, and the fallback are all under the project tree or its sibling.
 - User edits the file directly to change a project's `plans_dir`. No `--dir` flag in v1 (deferred).
 
-### `~/.claude/deep-plan/state/<session_id>.json`
+#### `~/.claude/deep-plan/state/<session_id>.json`
 
 ```json
 {
@@ -210,9 +336,9 @@ The README is short (under 300 lines) and is the user's first stop. Required sec
 
 The hook reads this on every `PreToolUse` to determine allowed-write paths. The orchestrator is told to update the `phase` and `decisions` fields by re-running `setup_session.py --update phase=...`.
 
-## Phase workflow detail
+### Phase workflow detail
 
-### Phase 0: Bootstrap
+#### Phase 0: Bootstrap
 
 **Goal**: resolve project context and put the session into a known state.
 
@@ -233,7 +359,7 @@ The hook reads this on every `PreToolUse` to determine allowed-write paths. The 
 
 **Pause for user**: only on first-time-per-project (plans dir choice) or no-git fallback. Otherwise silent.
 
-### Phase 1: Parallel Triangulation
+#### Phase 1: Parallel Triangulation
 
 **Goal**: build a shared evidence base from three independent angles before any decision is taken.
 
@@ -260,7 +386,7 @@ The hook reads this on every `PreToolUse` to determine allowed-write paths. The 
 
 Block until answered. Re-loop into Phase 1 with the narrowed/broadened scope if not "confirm". This is the only Phase 1 user pause.
 
-### Phase 2: Decision Surfacing
+#### Phase 2: Decision Surfacing
 
 **Goal**: enumerate two to five sub-decisions worth surfacing, generate option sets inline, and resolve them with the user one at a time in dependency order.
 
@@ -305,7 +431,7 @@ Decisions surfaced:
 
 Three sequential `AskUserQuestion` calls. Plan slug becomes `rate-limiter-redis-token-bucket-per-api-key.md` (truncated per Section "Slug generation" below).
 
-### Phase 3: Targeted Deep Research
+#### Phase 3: Targeted Deep Research
 
 **Goal**: for every chosen option needing corroboration, do deep web/library research with citations.
 
@@ -326,7 +452,7 @@ Three sequential `AskUserQuestion` calls. Plan slug becomes `rate-limiter-redis-
 
 **Skip Phase 3** entirely if all decisions in Phase 2 selected the obvious "follows existing convention" option (no novel libraries to research).
 
-### Phase 4: Synthesis and Verification
+#### Phase 4: Synthesis and Verification
 
 **Goal**: produce the plan file body and run inline verification probes against design assumptions.
 
@@ -360,7 +486,7 @@ Three sequential `AskUserQuestion` calls. Plan slug becomes `rate-limiter-redis-
 
 The "approve" branch leads to Phase 5. Other branches loop back to the relevant earlier phase (refine/add/drop -> Phase 4 task edit; change decision -> Phase 2).
 
-### Phase 5: ExitPlanMode and post-approval handoff
+#### Phase 5: ExitPlanMode and post-approval handoff
 
 **Goal**: hand off to execution with a clean context.
 
@@ -392,7 +518,7 @@ This is **not** automatic; the user triggers `/compact` themselves. Why not auto
 
 **Post-approval mirror**: `finalize_plan.py` also copies the canonical plan into `~/gits/plan-modes/deep-plan/PLAN.md` if the canonical was a deep-plan plan (detected via the `<!-- deep-plan-version: ... -->` HTML comment that the orchestrator inserts at the top of every plan it writes). This keeps the source-of-truth subfolder up to date with the latest design without requiring manual file moves.
 
-## Sub-decision multi-option mechanic
+### Sub-decision multi-option mechanic
 
 Detailed under Phase 2 above. Summary of design choices:
 
@@ -403,14 +529,14 @@ Detailed under Phase 2 above. Summary of design choices:
 | Where persisted? | Plan file's `## Decisions made` table | Single source of truth; survives re-entry; AI-consumable. |
 | Cap? | 5 surfaced decisions per plan | Anything above cap is deferred to a follow-up plan. |
 
-## Subagent specs
+### Subagent specs
 
 All five agents share:
 - `=== CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===` opening header (mirrors existing Explore/Plan agents).
 - Implicit denylist `Agent, ExitPlanMode, Edit, Write, NotebookEdit` (subagents cannot have these even if listed; redundancy by tool allowlisting).
 - Output as a regular message to the orchestrator; never write files.
 
-### dp-explore-codebase
+#### dp-explore-codebase
 
 ```yaml
 ---
@@ -439,7 +565,7 @@ System prompt body excerpt:
 
 Output format: markdown sections `## Patterns`, `## Likely target files`, `## Open unknowns`.
 
-### dp-research-shallow
+#### dp-research-shallow
 
 ```yaml
 ---
@@ -468,7 +594,7 @@ System prompt body excerpt:
 
 Output format: `## Candidates` table (`name | one-liner | version | notes`), `## Risks`.
 
-### dp-research-deep
+#### dp-research-deep
 
 ```yaml
 ---
@@ -494,7 +620,7 @@ System prompt body excerpt:
 >
 > Cap at 8 fetches. Cite every claim with a URL.
 
-### dp-source-ingest
+#### dp-source-ingest
 
 ```yaml
 ---
@@ -524,7 +650,7 @@ System prompt body excerpt:
 >
 > Output sections: `## Explicit requirements`, `## Implicit requirements`, `## Hard constraints` (verbatim "do NOT" instructions), `## Unreadable sources` (path + error reason). Quote the user where possible. Never fabricate content.
 
-### dp-plan-perspective
+#### dp-plan-perspective
 
 ```yaml
 ---
@@ -550,11 +676,11 @@ System prompt body excerpt:
 
 Output format: a `## Tasks` markdown block following the plan-file task subschema below, plus a `## Perspective notes` paragraph.
 
-## System reminders
+### System reminders
 
 The new mode introduces three reminders, all embedded in the SKILL.md body (not separate harness reminders, since the skill body acts as the system prompt while active).
 
-### R1: Read-only and verification-sandbox boundary
+#### R1: Read-only and verification-sandbox boundary
 
 Embedded at the top of the skill body:
 
@@ -571,13 +697,13 @@ Embedded at the top of the skill body:
 >
 > If a tool is blocked, do not try alternative bypasses. Either rewrite to target the sandbox, or skip the verification.
 
-### R2: Approval-tool enforcement (mirrors existing reminder)
+#### R2: Approval-tool enforcement (mirrors existing reminder)
 
 Embedded near the end of the skill body:
 
 > The ONLY way to request user approval of the plan is `ExitPlanMode`. Never ask "looks good?", "ready?", "should I proceed?", "any changes?" via text or `AskUserQuestion`. `AskUserQuestion` is for clarifying requirements and choosing between options, never for plan approval.
 
-### R3: Re-entry behaviour
+#### R3: Re-entry behaviour
 
 Embedded in the Phase 0 section of the skill body:
 
@@ -589,13 +715,13 @@ Embedded in the Phase 0 section of the skill body:
 
 This wraps the existing `system-reminder-plan-mode-re-entry.md` semantics into the slug-collision case.
 
-### Reused unchanged
+#### Reused unchanged
 
 - `system-reminder-plan-mode-approval-tool-enforcement.md` (already injected by harness on plan-mode entry; we do not need to duplicate).
 - `system-reminder-exited-plan-mode.md` (fires on ExitPlanMode approval; nothing to add).
 - `system-reminder-plan-file-reference.md` (re-injects plan file content on next turn; works because we mirror to harness path).
 
-## Hooks
+### Hooks
 
 Two hooks, declared in the skill's `SKILL.md` frontmatter and referenced via `${CLAUDE_SKILL_DIR}` so they resolve correctly under both skill and (future) plugin scope:
 
@@ -612,7 +738,7 @@ hooks:
           command: ${CLAUDE_SKILL_DIR}/hooks/cleanup.py
 ```
 
-### `guard_writes.py` (PreToolUse)
+#### `guard_writes.py` (PreToolUse)
 
 Lives at `~/gits/plan-modes/deep-plan/skills/deep-plan/hooks/guard_writes.py`. Skill frontmatter references it via `${CLAUDE_SKILL_DIR}/hooks/guard_writes.py`. Python 3.12, stdlib only, mypy --strict, ruff-clean. Sketch:
 
@@ -693,7 +819,7 @@ if __name__ == "__main__":
 
 Acknowledged limitation: the regex is best-effort against accidents, not a sandbox. A determined model can construct bash that evades the regex (`python3 << 'EOF'\nopen('x','w').write('y')\nEOF`). The honest answer is that the orchestrator session is trusted; real read-only enforcement comes from `permissionMode: plan` on the subagents (the agents do most of the work), and the hook plus the skill prompt make accidental writes unlikely. If a stronger seal is needed in v2, run all `Bash` inside a `bwrap` sandbox; deferred.
 
-### `cleanup.py` (Stop)
+#### `cleanup.py` (Stop)
 
 ```python
 import json
@@ -728,7 +854,7 @@ if __name__ == "__main__":
     main()
 ```
 
-## Verification mechanic
+### Verification mechanic
 
 **Choice: option 2, sandbox temp dir, with hook-enforced allow-list.**
 
@@ -749,7 +875,7 @@ Why not "no POC files at all": some verifications genuinely need a file. Writing
 
 **Stop hook auto-cleanup**: yes, both per-session and a 7-day TTL sweep.
 
-## Plan file format (AI-consumable)
+### Plan file format (AI-consumable)
 
 Skeleton (every section required, in this order):
 
@@ -847,7 +973,7 @@ src/api/app.py
 tests/middleware/test_rate_limit.py::test_token_bucket_rejects_burst_over_limit (collected, currently failing as expected)
 ````
 
-### Formatting rules (strict)
+#### Formatting rules (strict)
 
 - Every task has every subsection, even if value is "none" or "n/a". Predictable shape -> trivial regex parsing for the implementation turn.
 - Task numbering is dense (1, 2, 3, ...), no gaps, no decimal subtasks.
@@ -860,7 +986,7 @@ tests/middleware/test_rate_limit.py::test_token_bucket_rejects_burst_over_limit 
 - No "Generated by Claude Code", no Co-Authored-By, no AI attribution (per user's global rule).
 - All Python verification commands use `uv run` if a `pyproject.toml` is present in the project root.
 
-### Why this shape is AI-consumable
+#### Why this shape is AI-consumable
 
 Implementation turn parses the plan with stdlib regex:
 
@@ -877,9 +1003,9 @@ Each match maps to one `TaskCreate` payload:
 
 `Decisions made` is read once and injected as a prologue. `Open questions` blocks `TaskCreate` if non-empty (the implementation turn either resolves them or asks the user before proceeding).
 
-## Slug generation and collision handling
+### Slug generation and collision handling
 
-### Generation rules
+#### Generation rules
 
 - Constructed from `{user_intent_keywords, top_2_decision_choices}`.
 - `[a-z0-9-]{1,60}`, lowercase, hyphen-separated, no leading/trailing or double hyphens.
@@ -889,7 +1015,7 @@ Each match maps to one `TaskCreate` payload:
   - "Refactor auth to JWT with cookie rotation" -> `auth-refactor-jwt-cookie-rotation`
   - "Migrate DB from Postgres to Mongo" -> `db-migration-postgres-to-mongo`
 
-### Collision handling
+#### Collision handling
 
 When `<slug>.md` already exists in `plans_dir`, `resolve_slug.py` reads its `## Context` paragraph and returns it. The orchestrator then:
 
@@ -899,13 +1025,13 @@ When `<slug>.md` already exists in `plans_dir`, `resolve_slug.py` reads its `## 
    - Different task: same options, default `new with -v2 suffix` (auto-incremented to `-v3`, `-v4` if `-v2` taken).
 3. Writes a `<!-- collision-resolution: refine|overwrite|v2 from <prev_slug>.md --> ` HTML comment at the top of the resulting file.
 
-### Optional user override
+#### Optional user override
 
 `/deep-plan slug:my-thing build me a thing` parses as: slug hint `my-thing`, prompt `build me a thing`. Without `slug:` prefix, the entire arg is treated as prompt; orchestrator generates the slug.
 
 If the user-supplied slug fails the `[a-z0-9-]{1,60}` regex, `resolve_slug.py` returns the closest valid slug and the orchestrator confirms via `AskUserQuestion`.
 
-## Failure modes
+### Failure modes
 
 | Failure | Behaviour |
 |---|---|
@@ -921,9 +1047,9 @@ If the user-supplied slug fails the `[a-z0-9-]{1,60}` regex, `resolve_slug.py` r
 | Concurrent `/deep-plan` sessions on the same project | Each session has its own `session_id`, its own state file, its own sandbox. The hook is keyed on `session_id` from the payload, not on project. Both sessions write to the same `custom_plan_path`. Last-write-wins. Acceptable; document in skill body. |
 | `harness_plan_path` not extractable from system reminder (format change) | `setup_session.py` accepts `--harness-plan-path` from the orchestrator. If the orchestrator cannot find it in the reminder, it falls back to `~/.claude/plans/deep-plan-fallback-${session_id}.md` and warns in conversation. |
 
-## Verification plan (end-to-end sanity check)
+### Verification plan (end-to-end sanity check)
 
-### Pre-flight
+#### Pre-flight
 
 ```
 cd ~/gits/plan-modes/deep-plan
@@ -934,7 +1060,7 @@ ls -la ~/.claude/agents/dp-*.md        # should show 5 symlinks
 
 After `install.py`, restart Claude Code so it picks up the new skill and agents.
 
-### End-to-end
+#### End-to-end
 
 Sanity-check the skill with this toy task. The user types it as their `/deep-plan` invocation:
 
@@ -942,7 +1068,7 @@ Sanity-check the skill with this toy task. The user types it as their `/deep-pla
 /deep-plan add a /healthz endpoint to the FastAPI app at ~/gits/scratch/api that returns service version, git sha, and downstream dependency reachability
 ```
 
-### Expected behaviour
+#### Expected behaviour
 
 **Phase 0**: skill detects plan mode (assumes user is in plan mode or auto-enters). `setup_session.py` resolves project root to `~/gits/scratch/api` (or asks for plans dir if first-time). Writes state file. Sandbox created at `/tmp/deep-plan-<session>/`.
 
@@ -967,7 +1093,7 @@ User answers each via `AskUserQuestion`. Decisions appear in plan file's `## Dec
 
 **Phase 5**: `finalize_plan.py` validates and mirrors. `ExitPlanMode` fires. Approval dialog shows the plan.
 
-### What good output looks like
+#### What good output looks like
 
 - Plan file at `~/gits/scratch/api/.claude/plans/healthz-endpoint-fastapi-builtin.md` (or whatever slug fits the choice).
 - 2 to 4 tasks, each with all required subsections (Target files, Change, Tests TDD, Verification, Depends on).
@@ -977,7 +1103,7 @@ User answers each via `AskUserQuestion`. Decisions appear in plan file's `## Dec
 - `## Open questions` says "none" (or one bullet).
 - No em-dashes anywhere. No "Generated by Claude Code".
 
-### How to confirm the read-only contract holds
+#### How to confirm the read-only contract holds
 
 While the skill is running, in a separate terminal:
 
@@ -996,18 +1122,18 @@ ls /tmp/deep-plan-*  # should be gone (Stop hook cleaned up)
 
 To explicitly probe the hook, run a deliberately-bad invocation (a /deep-plan task that asks the agent to "write a config file to /etc"). The hook should block; `~/.claude/deep-plan/hook-errors.log` should remain empty (block is not an error); `## Verification probes` appendix should record `[probe N blocked: ...]`.
 
-### How to confirm interactivity
+#### How to confirm interactivity
 
 Count `AskUserQuestion` invocations in the session transcript. Expected: at least one in Phase 0 (first-time-per-project), one in Phase 1 (Checkpoint 1), one per surfaced decision in Phase 2 (so 2 to 5), one in Checkpoint 2. Total: 5 to 9 user pauses for a typical task. If the count is below 4, the model is silently deciding things; review the skill body for prompt drift.
 
-### How to confirm post-approval handoff
+#### How to confirm post-approval handoff
 
 After `ExitPlanMode` approval:
 1. The orchestrator's last message names `/compact` explicitly. If it does not, prompt drift; review skill body.
 2. `~/gits/plan-modes/deep-plan/PLAN.md` is updated to match the just-approved plan (mirrored by `finalize_plan.py`). Confirm with `diff <custom_plan_path> ~/gits/plan-modes/deep-plan/PLAN.md`.
 3. After the user runs `/compact`, the next implementation turn parses `## Tasks` and issues `TaskCreate` calls. Confirm by counting `TaskCreate` calls in the transcript versus tasks in the plan.
 
-## Implementation notes
+### Implementation notes
 
 - All Python scripts are stdlib-only, mypy --strict compliant, ruff-clean. No new dependencies.
 - All shell helpers are Python, not bash. Per user preference (CLAUDE.md: "For bulk find-and-replace across files, write a short Python script instead of using sed").
@@ -1017,7 +1143,7 @@ After `ExitPlanMode` approval:
 - The skill should NOT be auto-invoked: `disable-model-invocation: true` in frontmatter (per user choice).
 - The skill body length budget is roughly 2000 to 3000 words; references files contain longer per-phase fragments to keep the body scannable.
 
-## Open questions for v2
+### Open questions for v2
 
 - Stronger Bash sandbox using `bwrap` or `firejail`. v1 uses regex + prompt; the seam is documented.
 - Plugin migration if versioning becomes a need. Mechanical transplant; deferred.
@@ -1025,7 +1151,7 @@ After `ExitPlanMode` approval:
 - Soft enforcement of interactivity via a PreToolUse hook that counts `AskUserQuestion` calls before allowing `## Decisions made` table writes.
 - Sharing plans across projects (a "templates" feature). Out of scope.
 
-## Critical files for implementation
+### Critical files for implementation
 
 All under `~/gits/plan-modes/deep-plan/`:
 

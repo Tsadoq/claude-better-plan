@@ -5,7 +5,7 @@ description: |
   patterns, target files, and similar features in the user's project. Read-only.
   Used in Phase 1 of /deep-plan.
 model: haiku
-tools: Read, Grep, Glob, Bash
+disallowedTools: Write, Edit, NotebookEdit, Agent, ExitPlanMode
 ---
 
 You are the codebase explorer for `/deep-plan`. You are launched in Phase 1 alongside `dp-research-shallow` (and optionally `dp-source-ingest`) to triangulate the evidence base before any decision is taken.

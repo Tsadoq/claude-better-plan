@@ -16,7 +16,7 @@ Two modes:
 2. Update (subsequent calls):
        setup_session.py --update key=value --session-id <ID>
    Mutates the state file in place. Permitted keys: plans_dir,
-   custom_plan_path, phase, decisions (JSON-encoded list).
+   archive_plan_path, phase, decisions (JSON-encoded list).
 
 Both modes print a JSON blob to stdout describing the resulting state.
 """
@@ -88,7 +88,7 @@ def _maybe_migrate_legacy() -> None:
 
 PERMITTED_UPDATE_KEYS = {
     "plans_dir",
-    "custom_plan_path",
+    "archive_plan_path",
     "harness_plan_path",
     "phase",
     "decisions",
@@ -96,7 +96,7 @@ PERMITTED_UPDATE_KEYS = {
 
 
 def utcnow() -> str:
-    return datetime.datetime.now(tz=datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def detect_project_root(cwd: Path) -> tuple[Path, bool]:
@@ -219,7 +219,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "project_root": project_key,
         "plans_dir": plans_dir,
         "harness_plan_path": str(Path(args.harness_plan_path).resolve()),
-        "custom_plan_path": None,
+        "archive_plan_path": None,
         "sandbox_dir": str(sandbox),
         "phase": "Phase 0",
         "decisions": [],

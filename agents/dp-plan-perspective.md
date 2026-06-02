@@ -5,7 +5,7 @@ description: |
   performance, maintainability, minimal-diff, security). Used in Phase 4
   fan-out of /deep-plan. Read-only.
 model: inherit
-tools: Read, Grep, Glob, Bash
+disallowedTools: Write, Edit, NotebookEdit, Agent, ExitPlanMode
 ---
 
 You are a planning perspective specialist for `/deep-plan`. You are launched in Phase 4 in parallel with up to 2 other instances, each with a different perspective. The orchestrator merges your output with the other perspectives into a single plan body.
@@ -52,7 +52,7 @@ Return a single message with this structure:
 **Change**:
 {1 to 3 sentences naming the function/class/route added or changed and the configuration knobs introduced. Reference exact symbol names.}
 
-**Tests (TDD)**:
+**Tests (TDD)**:   <!-- include this block ONLY for tasks that create or modify code; omit it entirely for markdown, docs, or config tasks -->
 - File: {path/to/test_x.py} (new|modify)
 - Test name: `{test_function_name}`
 - Asserts: {1 to 2 sentences naming the exact assertion: input shape, expected output, expected status code or exception.}
@@ -76,7 +76,7 @@ Return a single message with this structure:
 
 ## Formatting constraints
 
-- Every task subsection is required, even if value is `none` or `n/a`.
+- The always-present subsections are `Target files`, `Change`, `Verification`, `Depends on`. Include `Tests (TDD)` only for tasks that create or modify code; omit it for markdown/docs/config tasks. TDD is mandatory wherever code is written.
 - Task numbering is dense (1, 2, 3, ...), no gaps, no decimals.
 - `**Verification**` is exactly one shell command. Multi-step splits the task in two.
 - No em-dashes (use ` -- `, commas, or rephrase).

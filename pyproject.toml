@@ -1,0 +1,24 @@
+# Tooling config for the deep-plan plugin's helper scripts.
+#
+# The plugin ships no runtime Python dependencies (every script is stdlib-only);
+# this file exists purely to pin the lint/type/test quality gates that CI runs.
+# ruff and mypy are dev tools installed by CI, not plugin dependencies.
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+# Meaningful-but-green gate: pycodestyle errors, pyflakes, import sorting,
+# bugbear, and pyupgrade. Stylistic-only rule families are left off so the
+# gate flags real problems rather than churn.
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+# Strict typing is enforced only on the helper scripts and hooks (stdlib-only,
+# fully annotated). The test suite uses dynamic importlib loading that strict
+# mypy cannot model, so it is intentionally out of scope here; CI invokes mypy
+# with these two paths explicitly.
+python_version = "3.12"
+strict = true
+files = ["skills/deep-plan/scripts", "skills/deep-plan/hooks"]
