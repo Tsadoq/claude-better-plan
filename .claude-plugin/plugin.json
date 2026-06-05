@@ -1,14 +1,14 @@
 {
   "name": "deep-plan",
   "version": "0.3.0",
-  "description": "Replaces default plan mode for non-trivial work: triangulated research, AskUserQuestion-driven decisions, deep web research per branch, and an AI-consumable plan file.",
+  "description": "Deep planning for non-trivial work: triangulated research, AskUserQuestion-driven decisions, deep web research per branch, and an AI-consumable plan file in your repo.",
   "author": {
     "name": "tsadoq"
   },
   "homepage": "https://github.com/tsadoq/claude-better-plan",
   "repository": "https://github.com/tsadoq/claude-better-plan",
   "keywords": [
-    "plan-mode",
+    "planning",
     "skill",
     "research",
     "tdd"

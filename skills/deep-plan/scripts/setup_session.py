@@ -3,8 +3,8 @@
 
 Two modes:
 
-1. Bootstrap (initial call):
-       setup_session.py --harness-plan-path <PATH> --session-id <ID>
+1. Bootstrap (initial call, default when --update is absent):
+       setup_session.py --session-id <ID>
    Resolves project root via `git rev-parse --show-toplevel` (falls back to
    cwd with `no_git=true` sentinel), reads
    $XDG_STATE_HOME/deep-plan/projects.json (default
@@ -15,8 +15,7 @@ Two modes:
 
 2. Update (subsequent calls):
        setup_session.py --update key=value --session-id <ID>
-   Mutates the state file in place. Permitted keys: plans_dir,
-   archive_plan_path, phase, decisions (JSON-encoded list).
+   Mutates the state file in place. Permitted keys: plans_dir, plan_path.
 
 Both modes print a JSON blob to stdout describing the resulting state.
 """
@@ -88,10 +87,7 @@ def _maybe_migrate_legacy() -> None:
 
 PERMITTED_UPDATE_KEYS = {
     "plans_dir",
-    "archive_plan_path",
-    "harness_plan_path",
-    "phase",
-    "decisions",
+    "plan_path",
 }
 
 
@@ -140,8 +136,8 @@ def candidate_plans_dirs(project_root: Path) -> list[dict[str, str]]:
     name = project_root.name or "project"
     return [
         {
-            "label": f"{project_root}/.claude/plans/",
-            "path": str(project_root / ".claude" / "plans"),
+            "label": f"{project_root}/docs/plans/",
+            "path": str(project_root / "docs" / "plans"),
             "recommended": "true",
         },
         {
@@ -150,16 +146,25 @@ def candidate_plans_dirs(project_root: Path) -> list[dict[str, str]]:
             "recommended": "false",
         },
         {
-            "label": f"{project_root}/docs/plans/",
-            "path": str(project_root / "docs" / "plans"),
-            "recommended": "false",
-        },
-        {
             "label": f"{project_root.parent}/{name}-plans/",
             "path": str(project_root.parent / f"{name}-plans"),
             "recommended": "false",
         },
+        {
+            "label": f"{project_root}/.claude/plans/",
+            "path": str(project_root / ".claude" / "plans"),
+            "recommended": "false",
+            "warn": (
+                "protected path: writes under .claude/ always prompt "
+                "and cannot be allowlisted via permissions.allow"
+            ),
+        },
     ]
+
+
+def _is_protected_plans_dir(path: str | Path) -> bool:
+    """True when the plans dir resolves under a `.claude/` directory."""
+    return ".claude" in Path(path).parts
 
 
 def state_file_for(session_id: str) -> Path:
@@ -218,19 +223,18 @@ def cmd_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "started_at": utcnow(),
         "project_root": project_key,
         "plans_dir": plans_dir,
-        "harness_plan_path": str(Path(args.harness_plan_path).resolve()),
-        "archive_plan_path": None,
+        "plan_path": None,
         "sandbox_dir": str(sandbox),
-        "phase": "Phase 0",
-        "decisions": [],
     }
     write_state(args.session_id, state)
 
+    protected = bool(plans_dir) and _is_protected_plans_dir(str(plans_dir))
     return {
         **state,
         "sentinels": {
             "no_git": no_git,
             "prompt_for_plans_dir": prompt_for_plans_dir,
+            "plans_dir_under_protected_path": plans_dir if protected else False,
         },
         "candidate_plans_dirs": candidate_plans_dirs(project_root),
     }
@@ -246,18 +250,12 @@ def cmd_update(args: argparse.Namespace) -> dict[str, Any]:
     for kv in args.update:
         if "=" not in kv:
             return {"ok": False, "error": f"malformed update {kv!r}, expected key=value"}
-        key, raw_value = kv.split("=", 1)
+        key, value = kv.split("=", 1)
         if key not in PERMITTED_UPDATE_KEYS:
             return {
                 "ok": False,
                 "error": f"key {key!r} not permitted; allowed: {sorted(PERMITTED_UPDATE_KEYS)}",
             }
-        value: Any = raw_value
-        if key == "decisions":
-            try:
-                value = json.loads(raw_value)
-            except Exception as exc:
-                return {"ok": False, "error": f"decisions must be JSON: {exc!r}"}
         updates[key] = value
 
     state.update(updates)
@@ -280,12 +278,11 @@ def cmd_update(args: argparse.Namespace) -> dict[str, Any]:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="deep-plan session bootstrap and state mutation")
     p.add_argument("--session-id", required=True)
-    p.add_argument("--harness-plan-path")
     p.add_argument(
         "--update",
         nargs="*",
         default=[],
-        help="key=value pairs (repeatable). Mutually exclusive with --harness-plan-path bootstrap.",
+        help="key=value pairs (repeatable). When absent, the call bootstraps the session.",
     )
     return p.parse_args()
 
@@ -294,11 +291,8 @@ def main() -> int:
     args = parse_args()
     if args.update:
         result = cmd_update(args)
-    elif args.harness_plan_path:
-        result = cmd_bootstrap(args)
     else:
-        print(json.dumps({"ok": False, "error": "provide --harness-plan-path or --update"}))
-        return 2
+        result = cmd_bootstrap(args)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result.get("ok", True) else 1
 

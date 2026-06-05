@@ -2,9 +2,9 @@
 
 # Deep Plan Mode for Claude Code
 
-`/deep-plan` is a slash-invoked replacement for Claude Code's built-in plan mode, shipped as the `deep-plan` plugin. It co-designs a non-trivial plan with the user across seven phases, never silently picking between meaningful options, then hands the finished plan to a companion `/deep-plan:deep-plan-execute` command that builds it test-first.
+`/deep-plan` is a slash-invoked deep-planning workflow for Claude Code, shipped as the `deep-plan` plugin. It co-designs a non-trivial plan with the user across seven phases, never silently picking between meaningful options, then hands the finished plan to a companion `/deep-plan:deep-plan-execute` command that builds it test-first. It runs in the session's normal permission mode and deliberately does not use Claude Code's native plan mode (see the v0.4 changelog and the History sections for why).
 
-This document describes the **current design** (v0.2 of the plugin, plus the v0.3 power features). The original v0.1 design is preserved verbatim under `## History (v0.1)` at the end, for rationale only. Where the two conflict, the text above the History heading wins.
+This document describes the **current design** (v0.4 of the plugin: the v0.2 refactor, the v0.3 power features, and the v0.4 plan-mode removal). The superseded v0.2/v0.3 plan-mode integration is preserved under `## History (v0.2/v0.3 plan-mode integration)`, and the original v0.1 design verbatim under `## History (v0.1)` at the end, both for rationale only. Where they conflict, the text above the History headings wins.
 
 ## What it does
 
@@ -12,8 +12,8 @@ This document describes the **current design** (v0.2 of the plugin, plus the v0.
 - Surfaces every meaningful sub-decision as a 3-to-5-option `AskUserQuestion`. Never silently picks.
 - Does targeted deep web research per chosen option in Phase 3, opportunistically using ambient MCP documentation tools when the session exposes them.
 - Runs an adversarial critique (Phase 4.6) that tries to refute the plan before the user approves it.
-- Produces an AI-consumable plan file: descriptive slug, structured headings, `TaskCreate`-loadable, code-only TDD embedded.
-- Saves the plan to a user-chosen project-local location (default `<repo>/.claude/plans/`), never `~/.claude/plans/`.
+- Produces an AI-consumable plan file that lives in the project: born as `plans_dir/<topic>-draft.md` at the first resolved decision, renamed to `plans_dir/<slug>.md` before review. Descriptive slug, structured headings, `TaskCreate`-loadable, code-only TDD embedded.
+- Saves the plan to a user-chosen project-local location (default `<repo>/docs/plans/`), never `~/.claude/plans/`.
 - A `depth:` argument scales fan-out and effort, from a fast single pass to an exhaustive multi-wave run.
 
 The user is a co-author of the plan, not a reviewer.
@@ -33,16 +33,17 @@ flowchart TD
     P4 --> P46[Phase 4.6: Adversarial critique<br/>dp-plan-critic refutes the plan]
     P46 -->|material gaps| P4
     P46 -->|reverses a decision| P2
-    P46 -->|clean| CP2{Checkpoint 2<br/>walk plan}
+    P46 -->|clean| REP["finalize_plan.py --repair<br/>+ draft-to-slug rename"]
+    REP --> CP2{Checkpoint 2<br/>walk plan, THE approval gate}
     CP2 -->|refine/drop/add| P4
     CP2 -->|change decision| P2
-    CP2 -->|approve| P5[Phase 5: repair + ExitPlanMode + archive]
+    CP2 -->|approve| P5[Phase 5: in-place archive split + handoff]
     P5 --> Exec["/deep-plan:deep-plan-execute<br/>load_tasks.py -> TaskCreate -> addBlockedBy -> TDD loop"]
 ```
 
 ### Phase 0: Bootstrap
 
-Parse `$ARGUMENTS` for the optional `slug:` and `depth:` tokens (the harness has no native key:value parser); the remainder is the topic. Detect plan mode (auto-enter if needed), capture the harness-issued plan file path, run `setup_session.py` to resolve the project root and `plans_dir` (prompting once per project), and create the per-session sandbox.
+Parse `$ARGUMENTS` for the optional `slug:` and `depth:` tokens (there is no native key:value parser); the remainder is the topic. If native plan mode is active, ask the user in one sentence to toggle it off (Shift+Tab) and stop the turn. Run `setup_session.py` to resolve the project root and `plans_dir` (prompting once per project: `docs/plans/` recommended, `.claude/plans/` warned against as a protected path, with a warn-and-offer-to-move sentinel for remembered protected dirs), detect stale `*-draft.md` files left by abandoned runs (resume / overwrite / start fresh), and create the per-session sandbox.
 
 ### Phase 1: Parallel triangulation
 
@@ -50,7 +51,7 @@ Launch `dp-explore-codebase` (haiku) and `dp-research-shallow` (haiku) always, p
 
 ### Phase 2: Decision surfacing
 
-Enumerate 2 to 5 sub-decisions worth surfacing, generate option sets inline, and resolve them sequentially in dependency order via `AskUserQuestion`, persisting each answer to the plan's `## Decisions made` table as it resolves.
+Enumerate 2 to 5 sub-decisions worth surfacing, generate option sets inline, and resolve them sequentially in dependency order via `AskUserQuestion`. The draft plan file `plans_dir/<topic>-draft.md` is created when the first decision is asked, and each answer is appended to its `## Decisions made` table as it resolves, so an abandoned run never loses its decisions.
 
 ### Phase 3: Targeted deep research
 
@@ -64,9 +65,9 @@ Generate the slug, launch 1 to 3 `dp-plan-perspective` drafts (simplicity, perfo
 
 Launch `dp-plan-critic` to refute the synthesized plan: missing tasks, wrong or missing dependencies, code tasks lacking tests, decisions contradicted by research, and untested assumptions, each tagged `material` or `minor`. Material findings are fixed inline (or, if they reverse a user decision, loop back to Phase 2 with the contradiction quoted); minor findings go to `## Open questions`. Then Checkpoint 2 walks the plan with the user (approve / refine / drop / add / change a decision).
 
-### Phase 5: ExitPlanMode and handoff
+### Phase 5: Archive and handoff
 
-`finalize_plan.py --repair` auto-normalizes the plan in place, then `ExitPlanMode` requests approval. On approval, `finalize_plan.py --archive` writes the lean `plans_dir/<slug>.md` plus `<slug>.probes.md` and `<slug>.research.md` siblings, and the orchestrator recommends the user run `/compact` before handing the plan to `/deep-plan:deep-plan-execute`.
+`finalize_plan.py --repair` auto-normalizes the plan in place BEFORE the Checkpoint 2 question, so finalization cannot be skipped; Checkpoint 2's `AskUserQuestion` ("Approve and finalize") is the single approval gate. On approval, `finalize_plan.py --archive` rewrites the lean `plans_dir/<slug>.md` in place (source and destination are the same file) and splits `<slug>.probes.md` and `<slug>.research.md` siblings, and the orchestrator recommends the user run `/compact` before handing the plan to `/deep-plan:deep-plan-execute`.
 
 ## Depth control
 
@@ -88,15 +89,15 @@ Launch `dp-plan-critic` to refute the synthesized plan: missing tasks, wrong or 
 
 ## Read-only enforcement (current model)
 
-The orchestrator is read-only because it runs in plan mode. The subagents are **not** held read-only by `permissionMode` -- the harness ignores `permissionMode`, `hooks`, and `mcpServers` on plugin-bundled agents. Instead each `dp-*` agent declares a `disallowedTools` list that blocks `Write`, `Edit`, and `NotebookEdit`, reinforced by a read-only system prompt. The research agents (`dp-research-shallow`, `dp-research-deep`, `dp-source-ingest`) also disallow `Bash`, so they have no shell write vector at all; `dp-explore-codebase`, `dp-plan-perspective`, and `dp-plan-critic` keep `Bash` for read-only inspection. That residual Bash is a theoretical write vector, mitigated by the prompt and the trusted-session model, not a hard sandbox.
+The orchestrator is held read-only by a prompt-level contract (R1 in SKILL.md): it runs in the session's normal permission mode and may write only the project-local plan file and the per-session sandbox. There is no tool-level gate on the orchestrator; the contract is enforced by the skill text and the checkpoint gates. The subagents are **not** held read-only by `permissionMode` -- the harness ignores `permissionMode`, `hooks`, and `mcpServers` on plugin-bundled agents. Instead each `dp-*` agent declares a `disallowedTools` list that blocks `Write`, `Edit`, and `NotebookEdit`, reinforced by a read-only system prompt. The research agents (`dp-research-shallow`, `dp-research-deep`, `dp-source-ingest`) also disallow `Bash`, so they have no shell write vector at all; `dp-explore-codebase`, `dp-plan-perspective`, and `dp-plan-critic` keep `Bash` for read-only inspection. That residual Bash is a theoretical write vector, mitigated by the prompt and the trusted-session model, not a hard sandbox. Every agent also defensively disallows native plan mode's approval tool, since the harness nudges plan-shaped subagents toward it even though the skill never uses plan mode.
 
 Dropping the old `tools` allowlist for `disallowedTools` is also what lets the agents reach any ambient MCP documentation tools during research; an explicit `tools` allowlist would have stripped MCP access.
 
-The v0.1 bundled write-guard (`guard_writes.py`, a `PreToolUse` hook) has been removed. Plan mode plus `disallowedTools` are the boundary; only the `Stop` cleanup hook remains.
+The v0.1 bundled write-guard (`guard_writes.py`, a `PreToolUse` hook) has been removed. The prompt-level contract plus `disallowedTools` are the boundary; only the `Stop` cleanup hook remains.
 
 ## Plan file shape
 
-There is a single canonical plan file: the harness-issued plan path. There is no custom-file-plus-mirror dance; the project-local `<slug>.md` is an on-approval copy written by `finalize_plan.py --archive`. The section order is fixed -- Context, Decisions made, Architecture, Tasks, References, Open questions -- plus `## Verification probes` and `## Research dossiers` appendices that are split into sibling files on archive so the implementer file stays lean. Each task carries Target files, Change, Verification, and Depends on; the `**Tests (TDD)**` subsection is included only for tasks that create or modify code. `finalize_plan.py --repair` auto-repairs the plan (em-dashes, task headers, missing sections, attribution) rather than validating-and-rejecting in a loop.
+There is a single canonical plan file, and it is project-local: born as `plans_dir/<topic>-draft.md` at the start of Phase 2 (so resolved decisions are crash-safe), renamed to `plans_dir/<slug>.md` at Phase 4.1, and edited in place from then on. There is no mirror and no on-approval copy; `finalize_plan.py --archive` rewrites the same file lean in place. The session state's `plan_path` tracks the current name for re-entry detection. The section order is fixed -- Context, Decisions made, Architecture, Tasks, References, Open questions -- plus `## Verification probes` and `## Research dossiers` appendices that are split into sibling files on archive so the implementer file stays lean. Each task carries Target files, Change, Verification, and Depends on; the `**Tests (TDD)**` subsection is included only for tasks that create or modify code. `finalize_plan.py --repair` auto-repairs the plan (em-dashes, task headers, missing sections, attribution) rather than validating-and-rejecting in a loop.
 
 ## Engineering
 
@@ -123,6 +124,27 @@ v0.3 (power features, deeper research, engineering hardening):
 8. **Implementation handoff.** The `/deep-plan:deep-plan-execute` companion skill plus `load_tasks.py` turn the plan into harness tasks with dependencies and drive a TDD loop.
 9. **Opportunistic MCP research.** Subagents use `disallowedTools` (not a `tools` allowlist), keeping them write-free while letting them reach ambient MCP documentation tools.
 10. **Engineering floor.** Read-only enforcement re-documented accurately (`disallowedTools`, not `permissionMode`); `ruff` + `mypy --strict` + structural CI gates added; the untested helper scripts backfilled with tests.
+
+v0.4 (plan-mode removal, draft-to-slug lifecycle; six decisions resolved via a dogfooded /deep-plan run):
+
+11. **Plan mode dropped entirely.** Native plan mode's read-only behaviour is prompt-level only (no tool gating), the workflow it injects competes with the skill's phases, and the post-approval archive step failed in every observed run. The skill now runs in the session's normal permission mode and never calls plan mode's entry or approval tools. (Decision 1)
+12. **Draft-born plan file.** The plan is born as `plans_dir/<topic>-draft.md` when the first decision is asked, decisions append live, and the draft is renamed to `plans_dir/<slug>.md` at Phase 4.1. Crash-safe: an abandoned run keeps its resolved decisions. Stale drafts are detected in Phase 0 (resume / overwrite / start fresh). (Decision 2)
+13. **Plan-mode-active guard.** If native plan mode is active at invocation, Phase 0 prints one sentence asking the user to toggle it off (Shift+Tab) and stops the turn; there is no second code path. (Decision 3)
+14. **Checkpoint 2 is THE approval gate.** `finalize_plan.py --repair` and the draft-to-slug rename run BEFORE the question, so finalization cannot be skipped; on approve, `--archive` splits the appendix siblings in place (source equals destination). (Decision 4)
+15. **Minimal session state.** State carries only `{plans_dir, plan_path, sandbox_dir, session_id, project_root, started_at}`; the dead `phase`, `decisions`, `harness_plan_path`, and `archive_plan_path` fields are gone and `PERMITTED_UPDATE_KEYS` shrinks to `{plans_dir, plan_path}`. (Decision 5)
+16. **`docs/plans/` default.** `<repo>/docs/plans/` is the recommended plans_dir; `.claude/plans/` is demoted with a protected-path warning (writes under `.claude/` always prompt and cannot be allowlisted), and a remembered protected plans_dir triggers a warn-and-offer-to-move sentinel. The smooth-write mechanism is a `permissions.allow` snippet in project `.claude/settings.json`, since plugins cannot ship permissions. (Decision 6)
+
+## History (v0.2/v0.3 plan-mode integration)
+
+> Everything in this section is the superseded v0.2/v0.3 plan-mode integration, preserved for rationale only (same convention as the v0.1 History below: where it conflicts with the current design above, the current design wins). v0.4 removed native plan mode from the skill entirely.
+
+### Read-only enforcement and plan file (v0.2/v0.3)
+
+The orchestrator was read-only because it ran inside native plan mode. Phase 0 auto-entered plan mode via `EnterPlanMode` when it was not active, captured the harness-issued plan file path from the plan-mode reminder's "Plan File Info" line, and passed it to `setup_session.py --harness-plan-path`. That harness path was the single canonical plan file; the project-local `<slug>.md` was an on-approval copy. Phase 5 ran `finalize_plan.py --repair` against the harness path, called `ExitPlanMode` as the approval tool, and on approval (`system-reminder-exited-plan-mode`) ran `finalize_plan.py --archive` to write the copy plus siblings. Session state tracked `harness_plan_path` and `archive_plan_path`, plus `phase` and `decisions` progress fields updated via `setup_session.py --update`.
+
+### Why v0.4 dropped it
+
+Evidence from six real runs and ecosystem research: plan mode's read-only contract is prompt-level only, with no tool gating (anthropics/claude-code#19874, #6716); the harness injects a competing plan workflow whose system prompts override skill guardrails (#29950); `EnterPlanMode`/`ExitPlanMode` each cost a ToolSearch round-trip; the post-approval archive step was skipped or never reached in every observed run; the `phase`/`decisions` state never advanced past "Phase 0" in any session; and a rejected `ExitPlanMode` was once bypassed by referencing the harness path manually. The v0.4 design replaces all of it with the project-local draft-to-slug lifecycle and Checkpoint 2 as the single approval gate.
 
 ## History (v0.1)
 

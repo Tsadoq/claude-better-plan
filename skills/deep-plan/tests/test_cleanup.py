@@ -82,6 +82,45 @@ def test_session_teardown_and_ttl_sweep() -> None:
         assert fresh_dir.exists(), "fresh (<7d) sandbox should be spared"
 
 
+def test_cleanup_tolerates_minimal_state() -> None:
+    # Pins that cleanup.py reads only sandbox_dir: the new minimal state shape
+    # (no phase, decisions, harness_plan_path, archive_plan_path) must succeed.
+    with tempfile.TemporaryDirectory() as d:
+        base = Path(d)
+        tmp = base / "tmp"
+        state_dir = base / "state"
+        tmp.mkdir()
+        state_dir.mkdir()
+
+        sid = "minimalstate"
+        sandbox = tmp / f"deep-plan-{sid}"
+        sandbox.mkdir()
+        state_file = state_dir / f"{sid}.json"
+        state_file.write_text(
+            json.dumps(
+                {
+                    "plans_dir": "/proj/docs/plans",
+                    "plan_path": None,
+                    "sandbox_dir": str(sandbox),
+                    "session_id": sid,
+                    "project_root": "/proj",
+                    "started_at": "2026-06-05T00:00:00Z",
+                }
+            )
+        )
+
+        orig_state, orig_tmp = cleanup.STATE_DIR, cleanup.TMP
+        cleanup.STATE_DIR = state_dir
+        cleanup.TMP = tmp
+        try:
+            _run_main({"session_id": sid})
+        finally:
+            cleanup.STATE_DIR, cleanup.TMP = orig_state, orig_tmp
+
+        assert not state_file.exists(), "session state file should be removed"
+        assert not sandbox.exists(), "session sandbox should be removed"
+
+
 def test_missing_session_is_harmless() -> None:
     # No session_id, empty payload: must not raise.
     orig_state, orig_tmp = cleanup.STATE_DIR, cleanup.TMP

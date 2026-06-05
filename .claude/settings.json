@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit(/docs/plans/**)",
+      "Write(/docs/plans/**)",
+      "Bash(mv docs/plans/*)"
+    ]
+  }
+}
