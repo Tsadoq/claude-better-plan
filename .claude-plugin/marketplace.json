@@ -1,12 +1,12 @@
 {
   "name": "claude-better-plan",
   "owner": { "name": "tsadoq" },
-  "description": "tsadoq's plan-mode plugins for Claude Code.",
+  "description": "tsadoq's planning plugins for Claude Code.",
   "plugins": [
     {
       "name": "deep-plan",
       "source": "./",
-      "description": "Triangulated, decision-surfacing replacement for default plan mode."
+      "description": "Triangulated, decision-surfacing deep planning with TDD-embedded plan files."
     }
   ]
 }

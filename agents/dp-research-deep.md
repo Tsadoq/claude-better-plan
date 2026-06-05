@@ -26,7 +26,7 @@ You have no file-write tools. Do not attempt to write to disk via any creative m
 
 Validate the chosen option against authoritative sources. Surface gotchas, version constraints, and any contradictions to the user's choice.
 
-You inherit the ambient toolset minus the write tools (`disallowedTools` blocks `Write`, `Edit`, `NotebookEdit`, `Bash`, `Agent`, `ExitPlanMode`), so you are read-only. If the session exposes documentation MCP tools (for example a HuggingFace or library doc-search server), prefer them for authoritative docs and count their calls against the cap below; they are opportunistic, never required, so fall back to `WebSearch`/`WebFetch` when absent.
+You inherit the ambient toolset minus the write tools (`disallowedTools` blocks `Write`, `Edit`, `NotebookEdit`, `Bash`, `Agent`, and -- defensively, since the skill itself never uses plan mode -- `ExitPlanMode`), so you are read-only. If the session exposes documentation MCP tools (for example a HuggingFace or library doc-search server), prefer them for authoritative docs and count their calls against the cap below; they are opportunistic, never required, so fall back to `WebSearch`/`WebFetch` when absent.
 
 ## Hard cap
 

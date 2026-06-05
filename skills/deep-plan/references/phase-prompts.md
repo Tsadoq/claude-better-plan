@@ -8,35 +8,42 @@ Long-form per-phase prompts the orchestrator quotes into context as needed. The 
 You are at the start of /deep-plan. Before doing anything else:
 
 0. Parse $ARGUMENTS for the optional `slug:<value>` and `depth:<shallow|standard|exhaustive>`
-   tokens (the harness has no native key:value parser). Default depth=standard. The rest of
+   tokens (there is no native key:value parser). Default depth=standard. The rest of
    $ARGUMENTS is the topic. Every per-phase cap below is read from the "Depth scaling" table
    in SKILL.md; where a fragment gives a number, treat it as the standard-depth value.
 
-1. Check the most recent system reminder. If it does NOT contain "Plan mode is active.",
-   call EnterPlanMode and stop. The next user turn re-enters this skill in plan mode.
+1. Check the most recent system reminder. If it contains "Plan mode is active.", print one
+   sentence asking the user to toggle plan mode off (Shift+Tab) and stop the turn. This
+   skill never runs inside plan mode (SKILL.md R2); there is no second code path for it.
 
-2. Find the harness-issued plan file path. The plan-mode reminder contains a line like
-   "Plan File Info: ... create your plan at <ABS_PATH>". Capture <ABS_PATH>.
-
-3. Run setup_session.py to bootstrap session state:
+2. Run setup_session.py to bootstrap session state:
        python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
-         --harness-plan-path <ABS_PATH> \
          --session-id ${CLAUDE_SESSION_ID}
 
    The script returns a JSON blob describing the resolved project root, plans_dir, and
    sandbox path, plus optional sentinels:
-   - prompt_for_plans_dir: true   -> ask the user via AskUserQuestion (4 options below).
-   - no_git: true                 -> ask the user whether to use cwd as project root.
+   - prompt_for_plans_dir: true             -> ask the user via AskUserQuestion (options below).
+   - no_git: true                           -> ask the user whether to use cwd as project root.
+   - plans_dir_under_protected_path: <path> -> the remembered plans_dir lives under .claude/,
+     where every write prompts and cannot be allowlisted. Offer the move via AskUserQuestion
+     (<repo>/docs/plans/ recommended; keeping the current dir stays allowed). Never migrate
+     silently.
 
-4. Plans-dir options when prompting (Phase 0):
-   1. <repo>/.claude/plans/                (Recommended)
+3. Plans-dir options when prompting (Phase 0):
+   1. <repo>/docs/plans/                   (Recommended)
    2. <repo>/plans/
-   3. <repo>/docs/plans/
-   4. <repo-parent>/<repo-name>-plans/
+   3. <repo-parent>/<repo-name>-plans/
+   4. <repo>/.claude/plans/                (warn: protected path, every write prompts)
 
    The default MUST NOT be ~/.claude/plans/. Persist the user's choice via:
        python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
          --update plans_dir=<ABS_PATH> --session-id ${CLAUDE_SESSION_ID}
+
+4. Stale-draft detection (BEFORE Phase 2 may create a new draft): glob plans_dir/*-draft.md.
+   If a draft exists (left by an abandoned run), read its ## Context and ## Decisions made,
+   then ask via AskUserQuestion [resume from draft, overwrite, start fresh under another
+   topic name]. Default: resume (seed Phase 2 with the draft's already-resolved decisions).
+   Overwrite deletes the stale draft. No orphan draft may reach Phase 4.
 
 5. After state is bootstrapped, print a single short status sentence to the user and
    proceed to Phase 1. Do not narrate Phase 0's mechanics.
@@ -113,8 +120,15 @@ Build a dependency DAG of decisions. Present sequentially in topological order, 
 its own AskUserQuestion call. Each option set has 3 to 5 options, with the recommended
 option marked "(Recommended)" and listed first.
 
-After each AskUserQuestion resolves, immediately Edit the plan file to append a row to
-the `## Decisions made` table. This is the persistence point: do NOT batch.
+Immediately before asking the FIRST decision, create the draft plan file
+plans_dir/<topic>-draft.md (Write) seeded with the skeleton's title, ## Context paragraph,
+and an empty ## Decisions made table, then record it:
+    python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
+      --update plan_path=<plans_dir>/<topic>-draft.md --session-id ${CLAUDE_SESSION_ID}
+
+After each AskUserQuestion resolves, immediately Edit the draft to append a row to
+the `## Decisions made` table. This is the persistence point: do NOT batch. The draft is
+crash-safe: every resolved decision survives an abandoned run.
 
 If choosing option X for decision N invalidates an option for decision M (downstream),
 recompute M's options before asking. Example: choosing "Redis" as rate-limit store
@@ -164,10 +178,13 @@ Sub-steps in order:
          --slug <s> --plans-dir <d>
    - On collision, follow the section "Slug generation and collision handling" in PLAN.md.
 
-2. Record the archive path (the on-approval copy destination; the working file
-   stays the harness plan path):
+2. Rename the Phase 2 draft to its final name (may prompt once in default permission
+   mode unless `Bash(mv docs/plans/*)` is allowlisted), then record the new path:
+       mv <plans_dir>/<topic>-draft.md <plans_dir>/<slug>.md
        python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
-         --update archive_plan_path=<plans_dir>/<slug>.md --session-id ${CLAUDE_SESSION_ID}
+         --update plan_path=<plans_dir>/<slug>.md --session-id ${CLAUDE_SESSION_ID}
+   From here on every plan write edits plans_dir/<slug>.md in place. It is the single
+   canonical plan file; there is no mirror.
 
 3. Perspective fan-out: launch dp-plan-perspective agents in parallel. Count scales by
    depth (SKILL.md table): shallow=1, standard=1 to 3, exhaustive=3. Pick from
@@ -175,11 +192,11 @@ Sub-steps in order:
    evident priorities. See references/perspectives.md for selection heuristics.
 
 4. Synthesis: merge perspectives into a single plan body using
-   references/plan-file-template.md as the skeleton. Write it directly to the
-   harness plan file (the canonical plan). Include the **Tests (TDD)** subsection
+   references/plan-file-template.md as the skeleton, editing plans_dir/<slug>.md
+   in place over the draft-seeded sections. Include the **Tests (TDD)** subsection
    only for tasks that produce or modify code; omit it for markdown, docs, or
    config tasks. Append the Phase 3 dossiers verbatim under a ## Research dossiers
-   appendix so they survive into the archive.
+   appendix so they survive into the archived siblings.
    Merge rules:
    - When perspectives disagree on task ordering or test scope, prefer the union (additive).
    - When perspectives disagree on architectural choice, that means a sub-decision was
@@ -223,25 +240,30 @@ Act on findings:
 - Minor findings -> append to ## Open questions (kept genuinely deferrable, since a
   non-empty ## Open questions blocks /deep-plan:deep-plan-execute later).
 
-When the loop bound is reached or no material findings remain, present Checkpoint 2:
-    Q: "Plan written to <harness_plan_path>. What next?"
+When the loop bound is reached or no material findings remain, finalize mechanically
+BEFORE asking: complete the draft-to-slug rename if still pending, then run the
+finalize_plan.py --repair pass (semantics in the Phase 5 fragment). Then present
+Checkpoint 2:
+    Q: "Plan written to <plans_dir>/<slug>.md. What next?"
     Header: "Plan review"
     Options:
-      1. "Approve and exit plan mode" (Recommended)
+      1. "Approve and finalize" (Recommended)
       2. "Refine task <N>"
       3. "Drop task <N>"
       4. "Add a task"
       5. "Change a decision"
 
-The "approve" branch leads to Phase 5. Other branches loop back appropriately.
+This question IS the approval gate (SKILL.md R2). The "approve" branch leads to Phase 5.
+Other branches loop back appropriately.
 ```
 
-## Phase 5: ExitPlanMode and handoff
+## Phase 5: Archive and handoff
 
 ```
-1. Repair the plan in place (before approval):
+1. The repair pass runs BEFORE the Checkpoint 2 question (it cannot be skipped,
+   because it precedes the approval):
        python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/finalize_plan.py \
-         --repair --plan <harness_plan_path>
+         --repair --plan <plans_dir>/<slug>.md
 
    finalize_plan.py auto-repairs the plan (em-dashes, task headers, missing
    sections and task subsections inserted as n/a, attribution stripped) and
@@ -250,13 +272,11 @@ The "approve" branch leads to Phase 5. Other branches loop back appropriately.
    lines (for example, a code task missing its **Tests (TDD)** block). Only
    ok=false (empty plan, or no tasks at all) warrants looping back to Phase 4.
 
-2. Request approval: call ExitPlanMode with no parameters. It reads the repaired
-   harness plan file.
-
-3. On approval (system-reminder-exited-plan-mode fires): write the persistence
-   copy and split appendices into siblings, then emit EXACTLY the handoff message:
+2. On approval (Checkpoint 2 option 1, "Approve and finalize"): split the appendix
+   sections into sibling files in place (source and destination are the same file),
+   then emit EXACTLY the handoff message:
        python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/finalize_plan.py \
-         --archive --plan <harness_plan_path> --plans-dir <plans_dir> --slug <slug>
+         --archive --plan <plans_dir>/<slug>.md --plans-dir <plans_dir> --slug <slug>
 
        Plan approved and written to {plans_dir}/{slug}.md (with .research.md and
        .probes.md siblings when present).

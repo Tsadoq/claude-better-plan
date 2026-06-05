@@ -59,6 +59,27 @@ def test_skill_frontmatter_and_wiring() -> None:
     assert CRITIC_AGENT.exists(), f"missing critic agent: {CRITIC_AGENT}"
 
 
+def test_skill_forbids_plan_mode_tools() -> None:
+    text = DEEP_PLAN_SKILL.read_text()
+    fm = _frontmatter(text)
+    body = text[text.find("\n---", 3) + 4 :]
+
+    # Frontmatter: the plan-mode tools must not be allowed.
+    assert "EnterPlanMode" not in fm, "allowed-tools must not include EnterPlanMode"
+    assert "ExitPlanMode" not in fm, "allowed-tools must not include ExitPlanMode"
+
+    # Body: no harness plan-file or archive-path wiring survives.
+    for banned in ("harness_plan_path", "--harness-plan-path", "archive_plan_path"):
+        assert banned not in body, f"banned string {banned!r} found in SKILL.md body"
+
+    # Body: the prohibition is explicit and the load-bearing anchors remain.
+    assert "never call EnterPlanMode or ExitPlanMode" in body, (
+        "SKILL.md must carry the explicit plan-mode-tool prohibition sentence"
+    )
+    assert "Phase 4.6" in body, "SKILL.md must still reference Phase 4.6"
+    assert "${CLAUDE_SESSION_ID}" in body, "SKILL.md must keep the session-id placeholder"
+
+
 def test_execute_skill_targets_the_parser_and_task_api() -> None:
     text = EXECUTE_SKILL.read_text()
     assert "load_tasks.py" in text, "execute skill must invoke the load_tasks.py parser"

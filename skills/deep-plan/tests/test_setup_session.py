@@ -34,32 +34,64 @@ def _load(name: str):
 setup = _load("setup_session")
 
 
-def test_bootstrap_state_has_archive_field_and_no_custom_path() -> None:
-    sid = "pytest-archive-field"
-    ns = types.SimpleNamespace(session_id=sid, harness_plan_path="/tmp/harness-plan.md")
+def test_bootstrap_state_drops_dead_fields_and_uses_plan_path() -> None:
+    sid = "pytest-minimal-state"
+    ns = types.SimpleNamespace(session_id=sid)
+    dead_fields = (
+        "harness_plan_path",
+        "phase",
+        "decisions",
+        "archive_plan_path",
+        "custom_plan_path",
+    )
     try:
         result = setup.cmd_bootstrap(ns)
-        assert "archive_plan_path" in result
-        assert result["archive_plan_path"] is None
-        assert "custom_plan_path" not in result
-        assert result["harness_plan_path"].endswith("harness-plan.md")
+        assert "plan_path" in result
+        assert result["plan_path"] is None
+        for dead in dead_fields:
+            assert dead not in result, f"dead field {dead!r} still in bootstrap result"
 
         state_file = Path(_TMP) / "deep-plan" / "state" / f"{sid}.json"
         on_disk = json.loads(state_file.read_text())
-        assert "archive_plan_path" in on_disk
-        assert "custom_plan_path" not in on_disk
+        assert on_disk["plan_path"] is None
+        for dead in dead_fields:
+            assert dead not in on_disk, f"dead field {dead!r} still in on-disk state"
+
+        assert setup.PERMITTED_UPDATE_KEYS == {"plans_dir", "plan_path"}
     finally:
         shutil.rmtree(Path("/tmp") / f"deep-plan-{sid}", ignore_errors=True)
 
 
-def test_archive_plan_path_is_a_permitted_update_key() -> None:
-    assert "archive_plan_path" in setup.PERMITTED_UPDATE_KEYS
-    assert "custom_plan_path" not in setup.PERMITTED_UPDATE_KEYS
+def test_docs_plans_recommended_and_protected_sentinel() -> None:
+    candidates = setup.candidate_plans_dirs(Path("/proj"))
+    assert candidates[0]["path"].endswith("/docs/plans")
+    assert candidates[0]["recommended"] == "true"
+    claude_entries = [c for c in candidates if c["path"].endswith("/.claude/plans")]
+    assert len(claude_entries) == 1
+    assert claude_entries[0].get("warn"), ".claude/plans entry must carry a non-empty warn"
+
+    sid = "pytest-protected-sentinel"
+    root = setup.detect_project_root(Path.cwd())[0]
+    projects_file = Path(_TMP) / "deep-plan" / "projects.json"
+    saved = projects_file.read_text() if projects_file.exists() else None
+    try:
+        protected_dir = root / ".claude" / "plans"
+        setup.save_projects({str(root): {"plans_dir": str(protected_dir)}})
+        result = setup.cmd_bootstrap(types.SimpleNamespace(session_id=sid))
+        assert result["sentinels"]["plans_dir_under_protected_path"] == str(protected_dir)
+
+        setup.save_projects({str(root): {"plans_dir": str(root / "docs" / "plans")}})
+        result = setup.cmd_bootstrap(types.SimpleNamespace(session_id=sid))
+        assert not result["sentinels"]["plans_dir_under_protected_path"]
+    finally:
+        if saved is not None:
+            projects_file.write_text(saved)
+        shutil.rmtree(Path("/tmp") / f"deep-plan-{sid}", ignore_errors=True)
 
 
 def test_update_plans_dir_persists_and_creates_dir() -> None:
     sid = "pytest-update-plansdir"
-    boot = types.SimpleNamespace(session_id=sid, harness_plan_path="/tmp/h.md")
+    boot = types.SimpleNamespace(session_id=sid)
     try:
         setup.cmd_bootstrap(boot)
         with tempfile.TemporaryDirectory() as d:
@@ -79,7 +111,7 @@ def test_update_plans_dir_persists_and_creates_dir() -> None:
 
 def test_unknown_update_key_rejected() -> None:
     sid = "pytest-bad-update-key"
-    boot = types.SimpleNamespace(session_id=sid, harness_plan_path="/tmp/h.md")
+    boot = types.SimpleNamespace(session_id=sid)
     try:
         setup.cmd_bootstrap(boot)
         ns = types.SimpleNamespace(session_id=sid, update=["bogus_key=1"])
@@ -87,6 +119,58 @@ def test_unknown_update_key_rejected() -> None:
         assert result["ok"] is False
         assert "not permitted" in result["error"]
     finally:
+        shutil.rmtree(Path("/tmp") / f"deep-plan-{sid}", ignore_errors=True)
+
+
+def test_v03_state_and_projects_forward_compat() -> None:
+    sid = "pytest-v03-compat"
+    root = setup.detect_project_root(Path.cwd())[0]
+    projects_file = Path(_TMP) / "deep-plan" / "projects.json"
+    saved = projects_file.read_text() if projects_file.exists() else None
+    try:
+        # v0.3-shaped projects.json record plus a stray legacy key.
+        remembered = root / "docs" / "plans"
+        setup.save_projects(
+            {
+                str(root): {
+                    "plans_dir": str(remembered),
+                    "last_used_at": "2026-01-01T00:00:00Z",
+                    "stray_legacy_key": "ignored",
+                }
+            }
+        )
+        result = setup.cmd_bootstrap(types.SimpleNamespace(session_id=sid))
+        assert result["plans_dir"] == str(remembered)
+
+        # Legacy v0.3 state shape on disk must not break cmd_update.
+        setup.write_state(
+            sid,
+            {
+                "session_id": sid,
+                "project_root": str(root),
+                "plans_dir": str(remembered),
+                "harness_plan_path": "/tmp/legacy-harness.md",
+                "archive_plan_path": None,
+                "sandbox_dir": f"/tmp/deep-plan-{sid}",
+                "phase": "Phase 0",
+                "decisions": [],
+            },
+        )
+        with tempfile.TemporaryDirectory() as d:
+            target = Path(d) / "new-plans"
+            updated = setup.cmd_update(
+                types.SimpleNamespace(session_id=sid, update=[f"plans_dir={target}"])
+            )
+            assert updated["ok"] is True
+
+        rejected = setup.cmd_update(
+            types.SimpleNamespace(session_id=sid, update=["harness_plan_path=x"])
+        )
+        assert rejected["ok"] is False
+        assert "not permitted" in rejected["error"]
+    finally:
+        if saved is not None:
+            projects_file.write_text(saved)
         shutil.rmtree(Path("/tmp") / f"deep-plan-{sid}", ignore_errors=True)
 
 

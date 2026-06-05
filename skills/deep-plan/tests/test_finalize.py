@@ -8,6 +8,7 @@ Runnable two ways:
 from __future__ import annotations
 
 import importlib.util
+import tempfile
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
@@ -151,6 +152,32 @@ def test_archive_extracts_siblings() -> None:
     assert "## Context" in lean, "lean plan keeps the core sections"
     assert probes and "probe 1" in probes
     assert research and "redis" in research
+
+
+def test_archive_splits_in_place() -> None:
+    # Phase 5 calls cmd_archive with --plan pointing AT plans_dir/<slug>.md:
+    # source equals destination. Pin that the in-place split stays safe
+    # (the plan text is fully read before any write).
+    with tempfile.TemporaryDirectory() as d:
+        plans_dir = Path(d)
+        slug = "demo-plan"
+        plan_path = plans_dir / f"{slug}.md"
+        plan_path.write_text(
+            MESSY
+            + "\n## Verification probes\n\n[probe 1]: echo hi\nhi\n"
+            + "\n## Research dossiers\n\n### redis\nverdict: good\n"
+        )
+
+        result = finalize.cmd_archive(plan=plan_path, plans_dir=plans_dir, slug=slug)
+
+        assert result["ok"] is True
+        assert result["archive_path"] == str(plan_path)
+        lean = plan_path.read_text()
+        assert "## Verification probes" not in lean
+        assert "## Research dossiers" not in lean
+        assert "## Context" in lean, "lean plan keeps the core sections"
+        assert "probe 1" in (plans_dir / f"{slug}.probes.md").read_text()
+        assert "redis" in (plans_dir / f"{slug}.research.md").read_text()
 
 
 if __name__ == "__main__":

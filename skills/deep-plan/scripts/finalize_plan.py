@@ -1,25 +1,27 @@
 #!/usr/bin/env python3
-"""Phase 5 auto-repair normalizer and archiver for /deep-plan.
+"""Checkpoint 2 auto-repair normalizer and Phase 5 archiver for /deep-plan.
 
 Two modes:
 
-1. Repair (run in plan mode, before ExitPlanMode):
-       finalize_plan.py --repair --plan <harness_plan_path>
-   Reads the canonical plan (the harness-issued plan file), repairs it in
-   place, and prints a JSON report `{ok, fixes, warnings}`. Repair never
-   loops: it normalizes em-dashes, task headers, missing sections, and
-   missing task subsections rather than rejecting. `ok` is false only for
-   genuinely unrecoverable input (empty file, or no tasks at all).
+1. Repair (run before the Checkpoint 2 approval gate):
+       finalize_plan.py --repair --plan <plan_path>
+   Reads the plan file, repairs it in place, and prints a JSON report
+   `{ok, fixes, warnings}`. Repair never loops: it normalizes em-dashes,
+   task headers, missing sections, and missing task subsections rather
+   than rejecting. `ok` is false only for genuinely unrecoverable input
+   (empty file, or no tasks at all).
 
-2. Archive (run after approval, plan mode off):
-       finalize_plan.py --archive --plan <harness_plan_path> \
+2. Archive (run after Checkpoint 2 approval):
+       finalize_plan.py --archive --plan <plans-dir>/<slug>.md \
          --plans-dir <dir> --slug <slug>
    Repairs, then splits the appendix sections (`## Verification probes`,
-   `## Research dossiers`) into sibling files and writes the lean plan to
-   <plans-dir>/<slug>.md. Prints a JSON report with the written paths.
+   `## Research dossiers`) into sibling files and rewrites the lean plan
+   at <plans-dir>/<slug>.md. Source and destination are the same file;
+   the plan text is fully read before any write, so the in-place split
+   is safe. Prints a JSON report with the written paths.
 
-The single canonical plan file is the harness plan path; there is no
-custom/mirror dance. The project-local <slug>.md is an on-approval copy.
+The single canonical plan file is plans_dir/<slug>.md (born as a
+-draft.md in Phase 2, renamed at Phase 4.1); there is no mirror copy.
 """
 
 from __future__ import annotations
@@ -308,8 +310,10 @@ def cmd_archive(plan: Path, plans_dir: Path, slug: str) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="deep-plan plan repairer and archiver")
     parser.add_argument("--repair", action="store_true", help="normalize the plan in place")
-    parser.add_argument("--archive", action="store_true", help="write lean copy + siblings")
-    parser.add_argument("--plan", required=True, help="path to the canonical (harness) plan file")
+    parser.add_argument(
+        "--archive", action="store_true", help="split appendix siblings, rewrite lean plan"
+    )
+    parser.add_argument("--plan", required=True, help="path to the plan file")
     parser.add_argument("--plans-dir", help="archive destination dir (archive mode)")
     parser.add_argument("--slug", help="archive base name (archive mode)")
     args = parser.parse_args()
