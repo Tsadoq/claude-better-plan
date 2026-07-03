@@ -1,6 +1,6 @@
 # dp-plan-perspective catalogue
 
-The perspective fan-out in Phase 4 picks 1 to 3 perspectives from the catalogue below based on the user's evident priorities. Each perspective drafts a `## Tasks` block that the orchestrator merges.
+The perspective fan-out in Phase 4 picks 1 to 3 priority perspectives from the catalogue below based on the user's evident priorities, and always launches `deep-modules` in addition (total fan-out 2 to 4). Each perspective drafts a `## Tasks` block that the orchestrator merges.
 
 ## Perspectives
 
@@ -44,9 +44,17 @@ Use when: the change touches auth, secrets, network ingress, file uploads, deser
 
 Anti-pattern this guards against: a feature that ships secure-by-accident and breaks the moment someone touches it.
 
+### deep-modules
+
+Frame: apply the `## Plan-time principles` section of `${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/design-principles.md` (read it before drafting). Prefer deep modules: small interfaces hiding real functionality. Pull complexity downward rather than exporting knobs and caller obligations. Define errors out of existence where semantics allow. Slice tasks along module boundaries so each increment delivers a whole abstraction.
+
+Use when: always. This perspective is not picked; it launches on every fan-out in addition to the 1 to 3 picked perspectives.
+
+Anti-pattern this guards against: a plan whose tasks each work in isolation but compose into shallow wrappers, leaked formats, and pass-through layers nobody designed on purpose.
+
 ## How to choose
 
-The orchestrator reads the user's prompt and the resolved decisions, then picks 1 to 3 perspectives. Examples:
+The orchestrator reads the user's prompt and the resolved decisions, then picks 1 to 3 priority perspectives; `deep-modules` always launches in addition, so the total fan-out is 2 to 4. Examples (picked perspectives only; deep-modules is implicit in each):
 
 - "Add a rate limiter" -> performance + security + simplicity (3-way).
 - "Rename a private helper" -> minimal-diff (1-way; nothing else applies).
@@ -54,4 +62,4 @@ The orchestrator reads the user's prompt and the resolved decisions, then picks 
 - "Add a /healthz endpoint" -> simplicity + maintainability (2-way).
 - "Migrate DB" -> minimal-diff + maintainability (2-way).
 
-Cap is 3. Beyond 3, perspectives start contradicting each other in ways the orchestrator cannot reconcile without surfacing a sub-decision back to the user, which is Phase 2's job.
+Cap is 3 picked (4 total with deep-modules). Beyond that, perspectives start contradicting each other in ways the orchestrator cannot reconcile without surfacing a sub-decision back to the user, which is Phase 2's job. deep-modules does not count against the cap: it constrains module shape rather than competing on priorities.

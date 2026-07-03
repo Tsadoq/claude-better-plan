@@ -92,7 +92,9 @@ warn the user rather than failing.
 ## Step 5: Implement test-first, in dependency order
 
 Process tasks in topological order (a task runs only after every task it is
-blocked by is done). For each task, mark it `in_progress` via `TaskUpdate`, then:
+blocked by is done). For each task, mark it `in_progress` via `TaskUpdate`,
+capture a baseline ref for the design review in step 4 (`git stash create`;
+empty output means the tree is clean, use `HEAD`), then:
 
 1. **If the task has a `tests` block (code task):** write the test described in
    `tests` FIRST. Run the `verification` command and confirm it FAILS (red). If
@@ -103,7 +105,18 @@ blocked by is done). For each task, mark it `in_progress` via `TaskUpdate`, then
 3. **Run the `verification` command.** For a code task it must now pass (green).
    For a docs/config task (no `tests` block) the verification command is the
    acceptance check; run it and confirm it passes.
-4. On green, mark the task `completed` via `TaskUpdate`. On red you cannot fix
+4. **Design-review the task's diff.** Collect the diff of THIS task only, not
+   the accumulated run: the loop never commits between tasks, so a plain
+   `git diff` would re-review earlier tasks' edits to shared files. Diff the
+   baseline ref against the worktree, scoped to the task's `Target files`
+   (`git diff <baseline> -- <target files>`), and pass the diff as text
+   because the critics have no Bash. Run the design fleet on it per
+   `${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/fleet-orchestration.md`
+   (one `dp-design-critic` per red-flag cluster, then the verify stage).
+   Fix `material` findings within the task and re-run the `verification`
+   command before completing; log `minor` findings in the task completion
+   note without blocking.
+5. On green, mark the task `completed` via `TaskUpdate`. On red you cannot fix
    within the task's scope, stop and report rather than expanding scope.
 
 Run verification commands exactly as written in the plan. If a command assumes
@@ -118,3 +131,4 @@ the substitution.
 - Proceeding past a non-empty `## Open questions`.
 - Re-opening a decision already settled in `## Decisions made` without asking.
 - Batching unrelated tasks into one `TaskCreate`.
+- Marking a task completed with unresolved material design findings.

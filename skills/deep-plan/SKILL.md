@@ -20,9 +20,10 @@ allowed-tools:
   - Skill
   - WebFetch
   - WebSearch
+  - Workflow
   - Write
 hooks:
-  Stop:
+  SessionEnd:
     - hooks:
         - type: command
           command: ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/hooks/cleanup.py
@@ -67,7 +68,8 @@ The subagents are NOT held read-only by `permissionMode` (the harness ignores
 read-only because each `dp-*` agent declares a `disallowedTools` list that blocks
 `Write`, `Edit`, and `NotebookEdit`, reinforced by a read-only system prompt. The
 research agents (`dp-research-shallow`, `dp-research-deep`, `dp-source-ingest`)
-also disallow `Bash`, so they have no shell write vector at all. `dp-explore-codebase`,
+and the design critic (`dp-design-critic`) also disallow `Bash`, so they have no
+shell write vector at all. `dp-explore-codebase`,
 `dp-plan-perspective`, and `dp-plan-critic` keep `Bash` for read-only inspection;
 that Bash is a residual theoretical write vector, mitigated by the prompt and the
 trusted-session model, not a hard sandbox. Dropping the `tools` allowlist for
@@ -88,7 +90,7 @@ flowchart TD
     CP1 -->|confirm| P2[Phase 2: Decision Surfacing<br/>draft born, decisions appended live]
     P2 --> P3[Phase 3: Targeted Deep Research]
     P3 --> P4[Phase 4: Synthesis & Verification<br/>draft renamed to slug]
-    P4 --> P45[Phase 4.6: Adversarial critique<br/>dp-plan-critic refutes the plan]
+    P4 --> P45[Phase 4.6: Adversarial critique<br/>dp-plan-critic refutes the plan<br/>+ dp-design-critic fleet reviews its design]
     P45 -->|material gaps| P4
     P45 -->|reverses a decision| P2
     P45 -->|clean| REP["finalize_plan.py --repair"]
@@ -113,7 +115,7 @@ Everything in `$ARGUMENTS` that is not one of those tokens is the planning topic
 |--------|---------|--------------------|------------|
 | Phase 1 fan-out | explore + shallow only (source-ingest still runs if the user supplied sources) | explore + shallow (+ source-ingest when sources exist) | same as standard, may re-run on weak evidence |
 | Phase 3 deep research | skip entirely | one `dp-research-deep` per decision, cap 4, waves of 4 | multiple waves, never skip when any novelty exists |
-| Phase 4 perspectives | 1 | 1 to 3 | 3 |
+| Phase 4 perspectives | 1 picked + deep-modules | 1 to 3 picked + deep-modules | 3 picked + deep-modules |
 | Phase 4.6 critique | 1 quick pass, no loop | 1 pass, loop once on material findings | loop until no material findings (cap 3 rounds) |
 | `effort` | low to medium | inherit | high to xhigh |
 
@@ -215,6 +217,8 @@ Goal: enumerate two to five sub-decisions, generate option sets inline, resolve 
 - The codebase has one dominant pattern (3+ examples of pattern X, 0 of others). Log under `## Decisions made` with rationale "follows existing convention".
 - The user's prompt explicitly fixes the choice ("use Redis").
 
+**Design framing**: when generating options for architectural-axis and boundary-placement decisions, consult the `## Plan-time principles` section of `${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/design-principles.md`. Prefer options that deepen module interfaces over options that add layers or knobs. If an option would introduce a red flag (a pass-through layer, information leakage across modules), name that inside the option's description so the user chooses with eyes open.
+
 **Cap**: 5 surfaced decisions. Excess goes to `## Open questions` or a follow-up plan.
 
 **Presentation**: build a dependency DAG. Present each decision in topological order via its own `AskUserQuestion` with 3 to 5 options. Recommended option marked `(Recommended)` and listed first.
@@ -276,7 +280,7 @@ From here on, every plan write edits `plans_dir/<slug>.md` in place. It is the s
 
 ### 4.3 Perspective fan-out
 
-Launch 1 to 3 `dp-plan-perspective` agents (inherit) in parallel. Pick perspectives from `{simplicity, performance, maintainability, minimal-diff, security}` based on the user's evident priorities (see `references/perspectives.md`).
+Launch 2 to 4 `dp-plan-perspective` agents (inherit) in parallel: always one carrying the `deep-modules` perspective, plus 1 to 3 picked from `{simplicity, performance, maintainability, minimal-diff, security}` based on the user's evident priorities (see `references/perspectives.md`).
 
 ### 4.4 Synthesis
 
@@ -309,6 +313,8 @@ Probes that need fixture files write under `${SANDBOX_DIR}`. After approval, `fi
 ## Phase 4.6: Adversarial critique
 
 Before asking for approval, try to break the plan. Launch `dp-plan-critic` (inherit) with the synthesized plan body, the `## Decisions made` table, the Phase 1 evidence, and the Phase 3 dossiers. The critic returns findings under `## Missing tasks`, `## Wrong or missing dependencies`, `## Code tasks lacking tests`, `## Decisions contradicted by research`, and `## Untested assumptions`, each tagged `material` or `minor`.
+
+In the same launch message, run the design fleet per `${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/fleet-orchestration.md`: one `dp-design-critic` (haiku) per red-flag cluster in `design-principles.md`, reviewing the synthesized plan body and its `## Architecture` section as a design artifact, then the adversarial verify stage from the same recipe (Workflow path when available, fallback otherwise). Design findings carry the same `material`/`minor` tags and merge into the handling below; they share the depth loop bounds already defined -- no separate knobs.
 
 **Count and loop bound scale by depth** (Depth scaling table): shallow runs one quick pass and does not loop; standard runs one pass and loops back at most once if material findings remain; exhaustive re-runs the critic until a pass returns no material findings, capped at 3 rounds.
 
