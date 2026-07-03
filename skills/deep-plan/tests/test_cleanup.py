@@ -1,4 +1,4 @@
-"""Tests for the cleanup.py Stop hook: per-session teardown + 7-day TTL sweep.
+"""Tests for the cleanup.py SessionEnd hook: session teardown + 7-day TTL sweep.
 
 Everything is redirected into throwaway tmp dirs; the real /tmp and the real
 state dir are never touched.
@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 HOOKS = Path(__file__).resolve().parent.parent / "hooks"
+DEEP_PLAN_SKILL = Path(__file__).resolve().parent.parent / "SKILL.md"
 
 
 def _load(name: str) -> Any:
@@ -119,6 +120,46 @@ def test_cleanup_tolerates_minimal_state() -> None:
 
         assert not state_file.exists(), "session state file should be removed"
         assert not sandbox.exists(), "session sandbox should be removed"
+
+
+def test_cleanup_not_registered_on_stop() -> None:
+    # The hook must fire once per session (SessionEnd), not at the end of every
+    # assistant turn (Stop): a Stop binding deletes the live session's state
+    # file and sandbox mid-run.
+    text = DEEP_PLAN_SKILL.read_text()
+    assert text.startswith("---")
+    end = text.find("\n---", 3)
+    fm = text[3:end]
+    fm_lines = [line.strip() for line in fm.splitlines()]
+    assert "Stop:" not in fm_lines, "cleanup.py must not be bound to the per-turn Stop event"
+    assert "SessionEnd:" in fm_lines, "cleanup.py must be bound to SessionEnd"
+
+    # Crash-killed sessions never fire SessionEnd, so the sweep must also
+    # prune aged state JSONs, while sparing fresh ones from live sessions.
+    with tempfile.TemporaryDirectory() as d:
+        base = Path(d)
+        tmp = base / "tmp"
+        state_dir = base / "state"
+        tmp.mkdir()
+        state_dir.mkdir()
+
+        old_state = state_dir / "crashed.json"
+        fresh_state = state_dir / "live.json"
+        old_state.write_text("{}")
+        fresh_state.write_text("{}")
+        eight_days_ago = time.time() - 8 * 86400
+        os.utime(old_state, (eight_days_ago, eight_days_ago))
+
+        orig_state, orig_tmp = cleanup.STATE_DIR, cleanup.TMP
+        cleanup.STATE_DIR = state_dir
+        cleanup.TMP = tmp
+        try:
+            _run_main({"session_id": "someothersession"})
+        finally:
+            cleanup.STATE_DIR, cleanup.TMP = orig_state, orig_tmp
+
+        assert not old_state.exists(), "stale (>7d) state JSON should be swept"
+        assert fresh_state.exists(), "fresh (<7d) state JSON should be spared"
 
 
 def test_missing_session_is_harmless() -> None:

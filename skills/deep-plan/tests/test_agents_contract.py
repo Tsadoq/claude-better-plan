@@ -19,10 +19,10 @@ from pathlib import Path
 
 AGENTS_DIR = Path(__file__).resolve().parents[3] / "agents"
 
-# Research agents have no legitimate need for Bash, so they block it outright
-# and become genuinely write-free. The Bash-keeping agents (explore, perspective,
-# critic) need it for read-only inspection.
-BASH_FREE = {"dp-research-shallow", "dp-research-deep", "dp-source-ingest"}
+# Research agents and the design critic have no legitimate need for Bash, so
+# they block it outright and become genuinely write-free. The Bash-keeping
+# agents (explore, perspective, plan critic) need it for read-only inspection.
+BASH_FREE = {"dp-research-shallow", "dp-research-deep", "dp-source-ingest", "dp-design-critic"}
 
 WRITE_TOOLS = {"Write", "Edit", "NotebookEdit"}
 IGNORED_FIELDS = ("permissionMode", "hooks", "mcpServers")
@@ -75,6 +75,22 @@ def test_every_agent_blocks_write_tools() -> None:
             assert not any(line.strip().startswith(f"{field}:") for line in fm.splitlines()), (
                 f"{path.name}: declares plugin-ignored field {field!r}"
             )
+
+
+def test_design_critic_agent_present() -> None:
+    path = AGENTS_DIR / "dp-design-critic.md"
+    assert path.exists(), f"missing design critic agent: {path}"
+    fm = _frontmatter(path.read_text())
+    assert fm, f"{path.name}: missing frontmatter"
+
+    assert not _has_tools_allowlist(fm), (
+        f"{path.name}: declares a `tools:` allowlist, which strips ambient MCP access"
+    )
+
+    disallowed = _disallowed_tools(fm)
+    required = WRITE_TOOLS | {"Bash", "Agent"}
+    missing = required - disallowed
+    assert not missing, f"{path.name}: disallowedTools missing {sorted(missing)}"
 
 
 if __name__ == "__main__":

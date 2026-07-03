@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Stop hook for the deep-plan skill.
+"""SessionEnd hook for the deep-plan skill.
 
-Removes the per-session state file and sandbox directory. Also runs a
-defensive sweep of any /tmp/deep-plan-* dirs older than 7 days.
+Removes the ending session's state file and sandbox directory. Also runs a
+defensive sweep of any /tmp/deep-plan-* dirs and state-dir JSONs older than
+7 days (crash-killed sessions never fire SessionEnd, so aged leftovers are
+pruned here).
 
 Never blocks session end. All exceptions are swallowed silently.
 """
@@ -59,6 +61,13 @@ def main() -> None:
                         shutil.rmtree(d, ignore_errors=True)
                 except Exception:
                     pass
+
+        for f in STATE_DIR.glob("*.json"):
+            try:
+                if f.stat().st_mtime < cutoff:
+                    f.unlink(missing_ok=True)
+            except Exception:
+                pass
     except Exception:
         pass
 

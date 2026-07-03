@@ -186,8 +186,9 @@ Sub-steps in order:
    From here on every plan write edits plans_dir/<slug>.md in place. It is the single
    canonical plan file; there is no mirror.
 
-3. Perspective fan-out: launch dp-plan-perspective agents in parallel. Count scales by
-   depth (SKILL.md table): shallow=1, standard=1 to 3, exhaustive=3. Pick from
+3. Perspective fan-out: launch dp-plan-perspective agents in parallel. One instance
+   always carries the deep-modules perspective; the picked count scales by depth
+   (SKILL.md table): shallow=1, standard=1 to 3, exhaustive=3, each picked from
    {simplicity, performance, maintainability, minimal-diff, security} per the user's
    evident priorities. See references/perspectives.md for selection heuristics.
 
@@ -225,6 +226,14 @@ table, the Phase 1 evidence, and the Phase 3 dossiers. It returns findings under
 ## Missing tasks, ## Wrong or missing dependencies, ## Code tasks lacking tests,
 ## Decisions contradicted by research, and ## Untested assumptions, each tagged
 material|minor, plus a one-line ## Verdict.
+
+In the same launch message, run the design fleet per
+${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/fleet-orchestration.md: one
+dp-design-critic (haiku) per red-flag cluster in design-principles.md, reviewing the
+synthesized plan body and its ## Architecture section as a design artifact, then the
+recipe's adversarial verify stage (Workflow path when available, fallback otherwise).
+Design findings carry the same material|minor tags, merge into the handling below,
+and share the depth loop bounds; no separate knobs.
 
 Count and loop bound scale by depth (SKILL.md Depth scaling table):
 - shallow:    one quick pass, no loop.

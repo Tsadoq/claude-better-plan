@@ -82,6 +82,8 @@ To install from a local checkout while developing:
 /plugin install deep-plan@claude-better-plan
 ```
 
+Developing notes: edits to `SKILL.md` files and `references/` hot-reload within a session, but changes under `agents/` need `/reload-plugins` or a restart to register. Guideline content is edited only in `skills/design-review/references/design-principles.md`, whose section headings are pinned by `test_design_review_contract.py` -- change the test and every quoting caller in the same commit. Releases flow through the Conventional Commits auto-bump CI (a `feat:`/`fix:` commit on main bumps `plugin.json`); never edit the version by hand.
+
 ## File layout
 
 This repo is a Claude Code marketplace that ships exactly one plugin (`deep-plan`). The repo root is also the plugin root. Runtime data lives at `$XDG_STATE_HOME/deep-plan/` (default `~/.local/state/deep-plan/`) and is never git-tracked.
@@ -97,7 +99,7 @@ PLAN.md                                          # design rationale
 skills/deep-plan/
   SKILL.md                                       # entry point, orchestration body
   hooks/
-    cleanup.py                                   # Stop, sandbox + state cleanup
+    cleanup.py                                   # SessionEnd, sandbox + state cleanup
   scripts/
     setup_session.py                             # Phase 0 bootstrap
     resolve_slug.py                              # Phase 4 slug normalise + collision check
@@ -112,13 +114,19 @@ skills/deep-plan/
     test_setup_session.py                        # session state, update, legacy migration
     test_template_contract.py                    # template/golden drift guard
     test_resolve_slug.py                         # slug normalise/validate/collision
-    test_cleanup.py                              # Stop-hook teardown + TTL sweep
+    test_cleanup.py                              # SessionEnd-hook teardown + TTL sweep
     test_agents_contract.py                      # subagents are read-only via disallowedTools
     test_load_tasks.py                           # plan -> structured task parsing
     test_skill_contract.py                       # SKILL.md frontmatter + v0.3 wiring
+    test_design_review_contract.py               # design-principles headings + fleet wiring
     golden/example-plan.md
 skills/deep-plan-execute/
   SKILL.md                                       # companion: plan -> harness tasks -> TDD loop
+skills/design-review/
+  SKILL.md                                       # standalone /design-review entry (thin)
+  references/
+    design-principles.md                         # guideline source of truth (attribution inside)
+    fleet-orchestration.md                       # Workflow script, version gate, fallback, probe status
 agents/
   dp-explore-codebase.md
   dp-research-shallow.md
@@ -126,6 +134,7 @@ agents/
   dp-source-ingest.md
   dp-plan-perspective.md
   dp-plan-critic.md                              # Phase 4.6 adversarial critic
+  dp-design-critic.md                            # design-review fleet member (haiku, Bash-free)
 
 $XDG_STATE_HOME/deep-plan/                       # runtime, auto-created on first /deep-plan run
   projects.json                                  # per-project plans_dir map
@@ -139,6 +148,19 @@ $XDG_STATE_HOME/deep-plan/                       # runtime, auto-created on firs
 - **Adversarial critique (Phase 4.6)** launches `dp-plan-critic` after synthesis to *refute* the plan, not praise it: missing tasks, wrong or missing dependencies, code tasks without tests, decisions contradicted by research, and untested assumptions. Material findings are fixed inline (or, if they reverse a user decision, loop back to Phase 2 with the contradiction quoted); minor findings drop into `## Open questions`.
 - **Implementation handoff (`/deep-plan:deep-plan-execute`)** parses the finalized plan with `load_tasks.py`, creates one harness task per `### Task` (`TaskCreate`), wires `Depends on` into `addBlockedBy` (`TaskUpdate`), and drives a test-first loop task by task in dependency order. It refuses to start while `## Open questions` is non-empty. Requires Claude Code >= v2.1.142.
 - **Opportunistic MCP research.** The research subagents drop the old `tools` allowlist for a `disallowedTools` list, which keeps them write-free while letting them reach any ambient MCP documentation tools (for example a HuggingFace or library doc-search server) when present. They are never required: `WebSearch`/`WebFetch` remain the baseline.
+
+## Design review
+
+Design-quality guidance is embedded at every stage of the pipeline, delivered by a parallel critic fleet: one small-model `dp-design-critic` (haiku, read-only, Bash-free) per red-flag cluster, then an adversarial verify stage that tries to refute each finding before it reaches you. Four surfaces share the one implementation:
+
+- **Standalone `/design-review [path | git ref | plan-file]`** runs the fleet against any code, diff, or plan file (working diff by default) and reports deduplicated findings grouped material-then-minor.
+- **Plan-time (`/deep-plan`)**: Phase 2 option generation weighs options for interface depth and information hiding, and the Phase 4 perspective fan-out always includes a `deep-modules` perspective alongside the 1 to 3 picked ones.
+- **Critique-time (Phase 4.6)**: the design fleet reviews the synthesized plan body and architecture in the same launch as `dp-plan-critic`; findings merge into the existing material/minor handling.
+- **Execute-time (`/deep-plan:deep-plan-execute`)**: after each task's tests go green, the fleet reviews that task's diff; material findings are fixed before the task may complete, minor ones land in the completion note.
+
+The guideline content lives in a single file, `skills/design-review/references/design-principles.md`, grouped by stage (plan-time principles, review-time red flags as checkable questions, execute-time craft rules); orchestrators quote only the relevant group into each critic. The concepts are independently paraphrased and reorganized from a named source, with no affiliation or endorsement -- see that file's `## Attribution and scope` section for the full stance.
+
+The fleet prefers the harness's Workflow tool (deterministic fan-out, schema-validated findings, dedup barrier). Workflow is gated: Claude Code >= 2.1.154, paid plans only, off by default on Pro, and org-disableable. Wherever it is absent, denied, or errors, the callers automatically fall back to a plain Agent-tool fan-out with the identical finder-then-verify shape, so older or restricted installs degrade gracefully. Mechanics live in `skills/design-review/references/fleet-orchestration.md`.
 
 ## Key invariants
 
@@ -171,7 +193,7 @@ To change a project's `plans_dir`, edit `projects.json` directly.
 
 Planning is held read-only by a prompt-level contract: the skill runs in the session's normal permission mode and writes exactly two places, the project-local plan file and the verification sandbox. The subagents are not held read-only by `permissionMode` (the harness ignores `permissionMode`, `hooks`, and `mcpServers` on plugin-bundled agents); instead each `dp-*` agent declares a `disallowedTools` list that blocks `Write`, `Edit`, and `NotebookEdit`, reinforced by a read-only system prompt. The research agents (`dp-research-shallow`, `dp-research-deep`, `dp-source-ingest`) also disallow `Bash`, so they have no shell write vector; `dp-explore-codebase`, `dp-plan-perspective`, and `dp-plan-critic` keep `Bash` for read-only inspection (a residual theoretical write vector, mitigated by prompt and the trusted-session model, not a hard sandbox). Trading the old `tools` allowlist for `disallowedTools` is also what lets the agents opportunistically use any ambient MCP documentation tools during research. The single canonical plan file is project-local: born as `plans_dir/<topic>-draft.md` when the first decision is asked, renamed to `plans_dir/<slug>.md` at Phase 4.1, and edited in place from then on. On approval, `finalize_plan.py --archive` rewrites the lean `plans_dir/<slug>.md` in place and splits the appendices into `<slug>.probes.md` and `<slug>.research.md` siblings, so the implementer file stays lean and the research is preserved.
 
-Phase 4 verification probes that need scratch files (small fixtures, throwaway pytests) write under `/tmp/deep-plan-<session_id>/`, mode 0700, cleaned up by the `Stop` hook plus a 7-day TTL sweep. There is no separate write-guard hook: the read-only contract is prompt-level, enforced by the skill text and the checkpoint gates.
+Phase 4 verification probes that need scratch files (small fixtures, throwaway pytests) write under `/tmp/deep-plan-<session_id>/`, mode 0700, cleaned up by the `SessionEnd` hook plus a 7-day TTL sweep (which also prunes state files left by crash-killed sessions). There is no separate write-guard hook: the read-only contract is prompt-level, enforced by the skill text and the checkpoint gates.
 
 **Why not native plan mode.** Earlier versions orchestrated inside native plan mode. In practice its read-only guarantee is prompt-level only (there is no tool gating), the workflow it injects competes with this skill's phases, and its approval tool added a second ceremony whose post-approval archive step was skipped in every observed run. The skill now stays out of native plan mode entirely: if it is active at invocation, Phase 0 asks you to toggle it off (Shift+Tab) and stops the turn, and native plan mode's approval tool is never called.
 

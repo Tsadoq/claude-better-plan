@@ -17,6 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 DEEP_PLAN_SKILL = ROOT / "skills" / "deep-plan" / "SKILL.md"
 EXECUTE_SKILL = ROOT / "skills" / "deep-plan-execute" / "SKILL.md"
+DESIGN_REVIEW_SKILL = ROOT / "skills" / "design-review" / "SKILL.md"
 CRITIC_AGENT = ROOT / "agents" / "dp-plan-critic.md"
 
 
@@ -32,7 +33,7 @@ def _has_key(fm: str, key: str) -> bool:
 
 
 def test_both_skills_have_valid_frontmatter() -> None:
-    for skill in (DEEP_PLAN_SKILL, EXECUTE_SKILL):
+    for skill in (DEEP_PLAN_SKILL, EXECUTE_SKILL, DESIGN_REVIEW_SKILL):
         assert skill.exists(), f"missing skill file: {skill}"
         fm = _frontmatter(skill.read_text())
         assert fm, f"{skill}: no frontmatter block"
