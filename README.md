@@ -37,7 +37,7 @@ flowchart TD
     CP2{Checkpoint 2<br/>walk plan via AskUserQuestion,<br/>THE approval gate}
     CP2 -->|refine task| P4
     CP2 -->|change decision| P2
-    CP2 -->|approve| P5[Phase 5: in-place archive split<br/>+ post-approval handoff]
+    CP2 -->|approve| P5[Phase 5: in-place archive into<br/>plan folder members + README index<br/>+ post-approval handoff]
     P5 --> Compact["Recommend /compact<br/>user triggers manually"]
     Compact --> Exec["/deep-plan:deep-plan-execute<br/>load_tasks.py -> TaskCreate -> addBlockedBy -> TDD loop"]
 ```
@@ -69,11 +69,12 @@ Optional arguments (parsed from the prompt; order-free):
 After approval and `/compact`, hand the plan to implementation:
 
 ```
-/deep-plan:deep-plan-execute            # newest plan in the project plans_dir
-/deep-plan:deep-plan-execute path/to/plan.md
+/deep-plan:deep-plan-execute            # newest plan in the project plans_dir (folder or legacy flat)
+/deep-plan:deep-plan-execute docs/plans/my-plan         # a plan folder is accepted as-is
+/deep-plan:deep-plan-execute docs/plans/my-plan/plan.md
 ```
 
-It parses the plan's `## Tasks`, creates one harness task per task (`TaskCreate`), wires `Depends on` into `addBlockedBy` (`TaskUpdate`), then implements each task test-first in dependency order. It refuses to start while `## Open questions` is non-empty. Requires Claude Code >= v2.1.142 for the Task dependency API.
+It parses the plan's `## Tasks`, creates one harness task per task (`TaskCreate`), wires `Depends on` into `addBlockedBy` (`TaskUpdate`), then implements each task test-first in dependency order, appending a terse per-task entry to the plan folder's `design.md` under `## Implementation notes` as each task completes. It refuses to start while `## Open questions` is non-empty. When all tasks complete, folder plans get their `**Status**` flipped to `executed` and the plans index refreshed. Requires Claude Code >= v2.1.142 for the Task dependency API.
 
 To install from a local checkout while developing:
 
@@ -109,15 +110,17 @@ skills/deep-plan/
     phase-prompts.md
     perspectives.md
     plan-file-template.md
+    design-md-template.md                        # design.md member skeleton (two-phase lifecycle)
   tests/
-    test_finalize.py                             # repair + archive behaviour
+    test_finalize.py                             # repair + archive + task overview + index behaviour
     test_setup_session.py                        # session state, update, legacy migration
     test_template_contract.py                    # template/golden drift guard
-    test_resolve_slug.py                         # slug normalise/validate/collision
+    test_resolve_slug.py                         # slug normalise/validate/dual-form collision
     test_cleanup.py                              # SessionEnd-hook teardown + TTL sweep
     test_agents_contract.py                      # subagents are read-only via disallowedTools
-    test_load_tasks.py                           # plan -> structured task parsing
-    test_skill_contract.py                       # SKILL.md frontmatter + v0.3 wiring
+    test_load_tasks.py                           # plan -> structured task parsing (file or folder)
+    test_skill_contract.py                       # SKILL.md frontmatter + lifecycle wiring
+    test_design_md_contract.py                   # design.md template shape guard
     test_design_review_contract.py               # design-principles headings + fleet wiring
     golden/example-plan.md
 skills/deep-plan-execute/
@@ -164,7 +167,7 @@ The fleet prefers the harness's Workflow tool (deterministic fan-out, schema-val
 
 ## Key invariants
 
-1. A prompt-level read-only contract holds during planning: the orchestrator writes only the project-local plan file (born as `plans_dir/<topic>-draft.md` in Phase 2, renamed to `plans_dir/<slug>.md` in Phase 4) and the verification sandbox. Each subagent is held read-only by a `disallowedTools` list (not `permissionMode`, which the harness ignores for plugin-bundled agents).
+1. A prompt-level read-only contract holds during planning: the orchestrator writes only the project-local plan folder (born as `plans_dir/<topic>-draft/` in Phase 2, renamed to `plans_dir/<slug>/` at Phase 4.2 behind a fail-closed guard; members `plan.md`, `research.md`, `probes.md`, `design.md`) and the verification sandbox. Each subagent is held read-only by a `disallowedTools` list (not `permissionMode`, which the harness ignores for plugin-bundled agents).
 2. Approval is Checkpoint 2's structured walk-the-plan question, never a plain-text "looks good?". Mechanical finalization (repair + rename) runs before the question, so it cannot be skipped.
 3. Two-tier model usage: haiku for breadth, sonnet/inherit for synthesis.
 4. Continuity across turns and crashes: the plan lives in the repo from the first resolved decision onward, so an abandoned run never loses its decisions.
@@ -181,17 +184,19 @@ The fleet prefers the harness's Workflow tool (deterministic fan-out, schema-val
 
 The default is **never** `~/.claude/plans/`. Plans live with the project they describe. A remembered `plans_dir` under `.claude/` triggers a bootstrap sentinel and an offer to move it; nothing is migrated silently.
 
-To make plan writes prompt-free in default permission mode, add the allow rules once per project in `.claude/settings.json` (plugins cannot ship permissions, so this is a one-time user step):
+To make plan writes prompt-free in default permission mode, add the allow rules once per project in `.claude/settings.json` (plugins cannot ship permissions, so this is a one-time user step; the `test ! -e` rule covers the guard segments of the fail-closed Phase 4.2 rename, which are permission-checked per segment):
 
 ```json
-{"permissions": {"allow": ["Edit(/docs/plans/**)", "Write(/docs/plans/**)", "Bash(mv docs/plans/*)"]}}
+{"permissions": {"allow": ["Edit(/docs/plans/**)", "Write(/docs/plans/**)", "Bash(mv docs/plans/*)", "Bash(test ! -e docs/plans/*)"]}}
 ```
 
 To change a project's `plans_dir`, edit `projects.json` directly.
 
+The `plans_dir/README.md` index is fully generated between its HTML-comment markers (title, status, and date read from each plan's content, rows sorted by slug). A merge conflict inside the markers is resolved by re-running `finalize_plan.py --index --plans-dir <dir>`, never by hand-editing.
+
 ## Read-only model and verification sandbox
 
-Planning is held read-only by a prompt-level contract: the skill runs in the session's normal permission mode and writes exactly two places, the project-local plan file and the verification sandbox. The subagents are not held read-only by `permissionMode` (the harness ignores `permissionMode`, `hooks`, and `mcpServers` on plugin-bundled agents); instead each `dp-*` agent declares a `disallowedTools` list that blocks `Write`, `Edit`, and `NotebookEdit`, reinforced by a read-only system prompt. The research agents (`dp-research-shallow`, `dp-research-deep`, `dp-source-ingest`) also disallow `Bash`, so they have no shell write vector; `dp-explore-codebase`, `dp-plan-perspective`, and `dp-plan-critic` keep `Bash` for read-only inspection (a residual theoretical write vector, mitigated by prompt and the trusted-session model, not a hard sandbox). Trading the old `tools` allowlist for `disallowedTools` is also what lets the agents opportunistically use any ambient MCP documentation tools during research. The single canonical plan file is project-local: born as `plans_dir/<topic>-draft.md` when the first decision is asked, renamed to `plans_dir/<slug>.md` at Phase 4.1, and edited in place from then on. On approval, `finalize_plan.py --archive` rewrites the lean `plans_dir/<slug>.md` in place and splits the appendices into `<slug>.probes.md` and `<slug>.research.md` siblings, so the implementer file stays lean and the research is preserved.
+Planning is held read-only by a prompt-level contract: the skill runs in the session's normal permission mode and writes exactly two places, the project-local plan file and the verification sandbox. The subagents are not held read-only by `permissionMode` (the harness ignores `permissionMode`, `hooks`, and `mcpServers` on plugin-bundled agents); instead each `dp-*` agent declares a `disallowedTools` list that blocks `Write`, `Edit`, and `NotebookEdit`, reinforced by a read-only system prompt. The research agents (`dp-research-shallow`, `dp-research-deep`, `dp-source-ingest`) also disallow `Bash`, so they have no shell write vector; `dp-explore-codebase`, `dp-plan-perspective`, and `dp-plan-critic` keep `Bash` for read-only inspection (a residual theoretical write vector, mitigated by prompt and the trusted-session model, not a hard sandbox). Trading the old `tools` allowlist for `disallowedTools` is also what lets the agents opportunistically use any ambient MCP documentation tools during research. The single canonical plan file is project-local and lives in a per-plan folder: born as `plans_dir/<topic>-draft/plan.md` when the first decision is asked, renamed with its folder to `plans_dir/<slug>/` at Phase 4.2, and edited in place from then on. On approval, `finalize_plan.py --archive` rewrites the lean `plan.md` in place, splits the appendices into the `probes.md` and `research.md` folder members, and regenerates the `plans_dir/README.md` index, so the implementer file stays lean and the research is preserved. Plans archived by older plugin versions as flat files with legacy dotted siblings are still discovered read-only by every consumer; they are never rewritten.
 
 Phase 4 verification probes that need scratch files (small fixtures, throwaway pytests) write under `/tmp/deep-plan-<session_id>/`, mode 0700, cleaned up by the `SessionEnd` hook plus a 7-day TTL sweep (which also prunes state files left by crash-killed sessions). There is no separate write-guard hook: the read-only contract is prompt-level, enforced by the skill text and the checkpoint gates.
 

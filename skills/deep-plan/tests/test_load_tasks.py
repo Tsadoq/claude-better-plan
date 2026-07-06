@@ -7,8 +7,13 @@ Runnable two ways:
 
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import sys
+import tempfile
 from pathlib import Path
+from typing import Any
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 GOLDEN = Path(__file__).resolve().parent / "golden" / "example-plan.md"
@@ -18,6 +23,36 @@ GOLDEN = Path(__file__).resolve().parent / "golden" / "example-plan.md"
 sys.path.insert(0, str(SCRIPTS))
 
 import load_tasks  # noqa: E402
+
+
+def _run_main(argv: list[str]) -> tuple[int, dict[str, Any]]:
+    old_argv = sys.argv
+    sys.argv = ["load_tasks", *argv]
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            code = load_tasks.main()
+    finally:
+        sys.argv = old_argv
+    return code, json.loads(buf.getvalue())
+
+
+def test_load_tasks_accepts_folder_path() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        folder = Path(d) / "rate-limiter"
+        folder.mkdir()
+        (folder / "plan.md").write_text(GOLDEN.read_text())
+
+        code_dir, from_dir = _run_main(["--plan", str(folder)])
+        code_file, from_file = _run_main(["--plan", str(folder / "plan.md")])
+        assert code_dir == 0 and code_file == 0
+        assert from_dir["tasks"] == from_file["tasks"]
+
+        empty = Path(d) / "empty"
+        empty.mkdir()
+        code, err = _run_main(["--plan", str(empty)])
+        assert code != 0
+        assert "plan.md" in err["error"], "error must name the expected plan.md member"
 
 
 def test_parses_golden_plan_tasks_and_deps() -> None:

@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from finalize_plan import PLAN_FILE_NAME, resolve_plan_path
+
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 MAX_SLUG_LEN = 60
 
@@ -60,10 +62,15 @@ def extract_context(file_path: Path) -> str:
     return "\n".join(chunks).strip()
 
 
+def plan_exists(plans_dir: Path, slug: str) -> bool:
+    """A slug collides when it exists as a legacy flat file OR a plan folder."""
+    return (plans_dir / f"{slug}.md").exists() or (plans_dir / slug).exists()
+
+
 def next_v_suffix(plans_dir: Path, slug: str) -> str:
     candidate = slug
     n = 2
-    while (plans_dir / f"{candidate}.md").exists():
+    while plan_exists(plans_dir, candidate):
         candidate = f"{slug}-v{n}"
         n += 1
         if n > 999:
@@ -88,7 +95,7 @@ def main() -> int:
         "input": raw,
         "slug": normalised,
         "valid": valid,
-        "path": str(plans_dir / f"{normalised}.md") if valid else None,
+        "path": str(plans_dir / normalised / PLAN_FILE_NAME) if valid else None,
         "collision": False,
         "collision_context": None,
         "auto_v_suffix": None,
@@ -103,10 +110,13 @@ def main() -> int:
         print(json.dumps(result, indent=2, sort_keys=True))
         return 1
 
-    target = plans_dir / f"{normalised}.md"
-    if target.exists():
+    folder = plans_dir / normalised
+    flat = plans_dir / f"{normalised}.md"
+    if folder.exists() or flat.exists():
         result["collision"] = True
-        result["collision_context"] = extract_context(target)
+        # Prefer the folder's plan.md; fall back to the legacy flat file.
+        existing = resolve_plan_path(folder) if folder.exists() else flat
+        result["collision_context"] = extract_context(existing)
         result["auto_v_suffix"] = next_v_suffix(plans_dir, normalised)
 
     print(json.dumps(result, indent=2, sort_keys=True))

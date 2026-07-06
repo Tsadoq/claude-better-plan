@@ -60,6 +60,35 @@ def test_template_skeleton_normalizes_to_valid() -> None:
     assert again == repaired, "repair must be idempotent"
 
 
+def test_template_declares_overview_markers_and_summary_rule() -> None:
+    text = TEMPLATE.read_text()
+    skeleton = _extract_skeleton(text)
+
+    # Markers come from finalize_plan constants (never re-hardcoded here) and
+    # appear exactly once each, wrapping the Task overview heading between
+    # Architecture and Tasks in the skeleton.
+    assert text.count(finalize.OVERVIEW_BEGIN) == 1
+    assert text.count(finalize.OVERVIEW_END) == 1
+    arch = skeleton.index("## Architecture")
+    begin = skeleton.index(finalize.OVERVIEW_BEGIN)
+    heading = skeleton.index("## Task overview")
+    end = skeleton.index(finalize.OVERVIEW_END)
+    tasks = skeleton.index("## Tasks")
+    assert arch < begin < heading < end < tasks, (
+        "Task overview region must sit between ## Architecture and ## Tasks"
+    )
+
+    # Formatting rules name the opening summary-sentence rule and the
+    # folder member set.
+    assert "plain-English summary sentence" in text
+    for member in ("plan.md", "research.md", "probes.md", "design.md"):
+        assert member in text, f"folder member {member} not named in template"
+
+    # The dotted-sibling naming is gone.
+    assert "<slug>.probes.md" not in text
+    assert "<slug>.research.md" not in text
+
+
 def test_golden_plan_has_no_fixes_or_warnings() -> None:
     repaired, report = finalize.repair(GOLDEN.read_text())
     assert report["ok"] is True

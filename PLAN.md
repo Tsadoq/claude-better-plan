@@ -4,7 +4,7 @@
 
 `/deep-plan` is a slash-invoked deep-planning workflow for Claude Code, shipped as the `deep-plan` plugin. It co-designs a non-trivial plan with the user across seven phases, never silently picking between meaningful options, then hands the finished plan to a companion `/deep-plan:deep-plan-execute` command that builds it test-first. It runs in the session's normal permission mode and deliberately does not use Claude Code's native plan mode (see the v0.4 changelog and the History sections for why).
 
-This document describes the **current design** (v0.4 of the plugin: the v0.2 refactor, the v0.3 power features, and the v0.4 plan-mode removal). The superseded v0.2/v0.3 plan-mode integration is preserved under `## History (v0.2/v0.3 plan-mode integration)`, and the original v0.1 design verbatim under `## History (v0.1)` at the end, both for rationale only. Where they conflict, the text above the History headings wins.
+This document describes the **current design** (v0.6 of the plugin: the v0.2 refactor, the v0.3 power features, the v0.4 plan-mode removal, the v0.5 design-review critic fleet, and the v0.6 folder-per-plan artifact set). The superseded flat-file plan layout (v0.4/v0.5) is preserved under `## History (flat-file plan layout)`, the superseded v0.2/v0.3 plan-mode integration under `## History (v0.2/v0.3 plan-mode integration)`, and the original v0.1 design verbatim under `## History (v0.1)` at the end, all for rationale only. Where they conflict, the text above the History headings wins.
 
 ## What it does
 
@@ -12,7 +12,7 @@ This document describes the **current design** (v0.4 of the plugin: the v0.2 ref
 - Surfaces every meaningful sub-decision as a 3-to-5-option `AskUserQuestion`. Never silently picks.
 - Does targeted deep web research per chosen option in Phase 3, opportunistically using ambient MCP documentation tools when the session exposes them.
 - Runs an adversarial critique (Phase 4.6) that tries to refute the plan before the user approves it.
-- Produces an AI-consumable plan file that lives in the project: born as `plans_dir/<topic>-draft.md` at the first resolved decision, renamed to `plans_dir/<slug>.md` before review. Descriptive slug, structured headings, `TaskCreate`-loadable, code-only TDD embedded.
+- Produces an AI-consumable plan folder that lives in the project: born as `plans_dir/<topic>-draft/` (canonical `plan.md` inside) at the first resolved decision, renamed to `plans_dir/<slug>/` before review. Descriptive slug, structured headings, `TaskCreate`-loadable, code-only TDD embedded, plus a `design.md` member carrying the expanded per-decision rationale and, during execution, per-task implementation notes.
 - Saves the plan to a user-chosen project-local location (default `<repo>/docs/plans/`), never `~/.claude/plans/`.
 - A `depth:` argument scales fan-out and effort, from a fast single pass to an exhaustive multi-wave run.
 
@@ -43,7 +43,7 @@ flowchart TD
 
 ### Phase 0: Bootstrap
 
-Parse `$ARGUMENTS` for the optional `slug:` and `depth:` tokens (there is no native key:value parser); the remainder is the topic. If native plan mode is active, ask the user in one sentence to toggle it off (Shift+Tab) and stop the turn. Run `setup_session.py` to resolve the project root and `plans_dir` (prompting once per project: `docs/plans/` recommended, `.claude/plans/` warned against as a protected path, with a warn-and-offer-to-move sentinel for remembered protected dirs), detect stale `*-draft.md` files left by abandoned runs (resume / overwrite / start fresh), and create the per-session sandbox.
+Parse `$ARGUMENTS` for the optional `slug:` and `depth:` tokens (there is no native key:value parser); the remainder is the topic. If native plan mode is active, ask the user in one sentence to toggle it off (Shift+Tab) and stop the turn. Run `setup_session.py` to resolve the project root and `plans_dir` (prompting once per project: `docs/plans/` recommended, `.claude/plans/` warned against as a protected path, with a warn-and-offer-to-move sentinel for remembered protected dirs), detect stale `*-draft/` folders (and legacy flat drafts) left by abandoned runs (resume / overwrite / start fresh), and create the per-session sandbox.
 
 ### Phase 1: Parallel triangulation
 
@@ -51,7 +51,7 @@ Launch `dp-explore-codebase` (haiku) and `dp-research-shallow` (haiku) always, p
 
 ### Phase 2: Decision surfacing
 
-Enumerate 2 to 5 sub-decisions worth surfacing, generate option sets inline, and resolve them sequentially in dependency order via `AskUserQuestion`. The draft plan file `plans_dir/<topic>-draft.md` is created when the first decision is asked, and each answer is appended to its `## Decisions made` table as it resolves, so an abandoned run never loses its decisions.
+Enumerate 2 to 5 sub-decisions worth surfacing, generate option sets inline, and resolve them sequentially in dependency order via `AskUserQuestion`. The draft plan file `plans_dir/<topic>-draft/plan.md` is created when the first decision is asked, and each answer is appended to its `## Decisions made` table as it resolves, so an abandoned run never loses its decisions.
 
 ### Phase 3: Targeted deep research
 
@@ -59,7 +59,7 @@ Launch one `dp-research-deep` (sonnet) per decision branch, capped at 4 in paral
 
 ### Phase 4: Synthesis and verification
 
-Generate the slug, launch 1 to 3 `dp-plan-perspective` drafts (simplicity, performance, maintainability, minimal-diff, security), merge them into the plan body, and run inline verification probes (writing any fixtures into the sandbox).
+Generate the slug, rename the draft folder to `plans_dir/<slug>/` at Phase 4.2 behind a fail-closed guard (`test ! -e` on both the folder and the legacy flat form), launch 1 to 3 `dp-plan-perspective` drafts (simplicity, performance, maintainability, minimal-diff, security), merge them into the plan body, seed `<slug>/design.md` from `references/design-md-template.md` with the expanded per-decision rationale and evidence links, and run inline verification probes (writing any fixtures into the sandbox).
 
 ### Phase 4.6: Adversarial critique
 
@@ -67,7 +67,7 @@ Launch `dp-plan-critic` to refute the synthesized plan: missing tasks, wrong or 
 
 ### Phase 5: Archive and handoff
 
-`finalize_plan.py --repair` auto-normalizes the plan in place BEFORE the Checkpoint 2 question, so finalization cannot be skipped; Checkpoint 2's `AskUserQuestion` ("Approve and finalize") is the single approval gate. On approval, `finalize_plan.py --archive` rewrites the lean `plans_dir/<slug>.md` in place (source and destination are the same file) and splits `<slug>.probes.md` and `<slug>.research.md` siblings, and the orchestrator recommends the user run `/compact` before handing the plan to `/deep-plan:deep-plan-execute`.
+`finalize_plan.py --repair` auto-normalizes the plan in place BEFORE the Checkpoint 2 question (including regenerating the `## Task overview` table between its markers), so finalization cannot be skipped; Checkpoint 2's `AskUserQuestion` ("Approve and finalize") is the single approval gate. On approval, `finalize_plan.py --archive` rewrites the lean `plans_dir/<slug>/plan.md` in place (source and destination are the same file), stamps `**Status**: approved` and `**Date**` under the title, splits the appendices into the `probes.md` and `research.md` folder members, and regenerates the `plans_dir/README.md` index; the orchestrator then recommends the user run `/compact` before handing the plan to `/deep-plan:deep-plan-execute`.
 
 ## Depth control
 
@@ -83,7 +83,7 @@ Launch `dp-plan-critic` to refute the synthesized plan: missing tasks, wrong or 
 
 ## Implementation handoff
 
-`/deep-plan:deep-plan-execute [plan-file-path]` is a companion skill in the same plugin. It runs `load_tasks.py` to parse the finalized plan's `## Tasks` into structured JSON, refuses to start while `## Open questions` is non-empty, then performs a two-pass load against the harness Task API: pass 1 creates one task per `### Task` (`TaskCreate`), capturing the returned opaque id into an `int -> id` map; pass 2 wires each task's `Depends on` into `addBlockedBy` (`TaskUpdate`). It then drives a test-first loop task by task in dependency order: write the failing test, implement, run the task's verification command. Requires Claude Code >= v2.1.142 for the Task dependency API.
+`/deep-plan:deep-plan-execute [plan-path]` is a companion skill in the same plugin. It accepts a plan folder or its `plan.md`; with no argument, discovery picks the newest plan across both shapes (`<slug>/plan.md` preferred, legacy flat `<slug>.md` still found), excluding the generated README, legacy dotted siblings, and unfinished `*-draft/` folders. It runs `load_tasks.py` to parse the finalized plan's `## Tasks` into structured JSON, refuses to start while `## Open questions` is non-empty, then performs a two-pass load against the harness Task API: pass 1 creates one task per `### Task` (`TaskCreate`), capturing the returned opaque id into an `int -> id` map; pass 2 wires each task's `Depends on` into `addBlockedBy` (`TaskUpdate`). It then drives a test-first loop task by task in dependency order: write the failing test, implement, run the task's verification command, and (for folder plans) append a terse implementation note to `design.md` before marking the task completed. When all tasks complete, folder plans get their `**Status**` flipped to `executed` and the index refreshed via `finalize_plan.py --index`. Requires Claude Code >= v2.1.142 for the Task dependency API.
 
 `load_tasks.py` reuses the section-slicing helpers (`_header_pos`, `_section_end`, `_section_body`) from `finalize_plan.py` rather than re-implementing them.
 
@@ -97,11 +97,17 @@ The v0.1 bundled write-guard (`guard_writes.py`, a `PreToolUse` hook) has been r
 
 ## Plan file shape
 
-There is a single canonical plan file, and it is project-local: born as `plans_dir/<topic>-draft.md` at the start of Phase 2 (so resolved decisions are crash-safe), renamed to `plans_dir/<slug>.md` at Phase 4.1, and edited in place from then on. There is no mirror and no on-approval copy; `finalize_plan.py --archive` rewrites the same file lean in place. The session state's `plan_path` tracks the current name for re-entry detection. The section order is fixed -- Context, Decisions made, Architecture, Tasks, References, Open questions -- plus `## Verification probes` and `## Research dossiers` appendices that are split into sibling files on archive so the implementer file stays lean. Each task carries Target files, Change, Verification, and Depends on; the `**Tests (TDD)**` subsection is included only for tasks that create or modify code. `finalize_plan.py --repair` auto-repairs the plan (em-dashes, task headers, missing sections, attribution) rather than validating-and-rejecting in a loop.
+Every plan is a folder: `plans_dir/<slug>/` with fixed member names (`plan.md`, `research.md`, `probes.md`, `design.md`). `plan.md` is the canonical plan, born as `plans_dir/<topic>-draft/plan.md` at the start of Phase 2 (so resolved decisions are crash-safe); the folder is renamed to `plans_dir/<slug>/` at Phase 4.2 behind a fail-closed `test ! -e` dual guard (v0.6 also resolved the repo's old 4.1/4.2 rename naming drift in favour of 4.2), and `plan.md` is edited in place from then on. There is no mirror and no on-approval copy; `finalize_plan.py --archive` rewrites the same file lean in place, stamps `**Status**: approved` and `**Date**` under the title, splits the `## Verification probes` and `## Research dossiers` appendices into the `probes.md` and `research.md` members, and regenerates the `plans_dir/README.md` index (a generated region between `<!-- deep-plan-index:begin generated: do not edit -->` / `<!-- deep-plan-index:end -->` markers; merge conflicts inside it are resolved by regenerating, never by hand). The session state's `plan_path` tracks the current `plan.md` for re-entry detection.
+
+The `design.md` member has a two-phase lifecycle: Phase 4.4 seeds it from `references/design-md-template.md` with expanded per-decision rationale (why chosen, why the alternatives were rejected, evidence links into the sibling `research.md`), and `/deep-plan:deep-plan-execute` appends one terse `### Task {N}` entry under its `## Implementation notes` per completed task, gated after that task's verification passes.
+
+The section order inside `plan.md` is fixed -- Context, Decisions made, Architecture, Tasks, References, Open questions -- plus the generated `## Task overview` region between `<!-- deep-plan-task-overview:begin generated: do not edit -->` / `<!-- deep-plan-task-overview:end -->` markers: a `# | Task | Files | Deps | Summary` table rebuilt by every `--repair` run, whose Summary column is each task's opening plain-English summary sentence (every `**Change**` block must open with one, PEP 257 terminator rule). Each task carries Target files, Change, Verification, and Depends on; the `**Tests (TDD)**` subsection is included only for tasks that create or modify code. `finalize_plan.py --repair` auto-repairs the plan (em-dashes, task headers, missing sections, attribution, the overview region) rather than validating-and-rejecting in a loop.
+
+Discovery is dual-read, folder-write: every consumer reads both shapes (`<slug>/plan.md` preferred, legacy flat `<slug>.md` still found), `resolve_slug.py` treats either form as a collision, new plans are always folders, and legacy flat plans are approved historical records left untouched.
 
 ## Engineering
 
-Every helper is stdlib-only Python (`setup_session.py`, `resolve_slug.py`, `finalize_plan.py`, `load_tasks.py`, and the `cleanup.py` Stop hook), ruff-clean and `mypy --strict` compliant, with no runtime dependencies. CI (`.github/workflows/ci.yml`) installs `ruff`, `mypy`, and `pytest`, then runs, in order, `ruff check skills/deep-plan`, `mypy --strict skills/deep-plan/scripts skills/deep-plan/hooks`, and the test suite. `pyproject.toml` pins the gate configuration. Tests under `skills/deep-plan/tests/` cover the golden-plan drift guard, repair/archive, session state and migration, slug normalisation and collision, the cleanup hook, the read-only agents contract, the `load_tasks` parser, and the SKILL.md frontmatter/wiring contract.
+Every helper is stdlib-only Python (`setup_session.py`, `resolve_slug.py`, `finalize_plan.py`, `load_tasks.py`, and the `cleanup.py` Stop hook), ruff-clean and `mypy --strict` compliant, with no runtime dependencies. CI (`.github/workflows/ci.yml`) installs `ruff`, `mypy`, and `pytest`, then runs, in order, `ruff check skills/deep-plan`, `mypy --strict skills/deep-plan/scripts skills/deep-plan/hooks`, and the test suite. `pyproject.toml` pins the gate configuration. Tests under `skills/deep-plan/tests/` cover the golden-plan drift guard, repair/archive (including the generated Task overview and README index), session state and migration, slug normalisation and dual-form collision, the cleanup hook, the read-only agents contract, the `load_tasks` parser (file and folder inputs), the design.md template contract, and the SKILL.md frontmatter/wiring contract.
 
 ## Runtime layout
 
@@ -133,6 +139,28 @@ v0.4 (plan-mode removal, draft-to-slug lifecycle; six decisions resolved via a d
 14. **Checkpoint 2 is THE approval gate.** `finalize_plan.py --repair` and the draft-to-slug rename run BEFORE the question, so finalization cannot be skipped; on approve, `--archive` splits the appendix siblings in place (source equals destination). (Decision 4)
 15. **Minimal session state.** State carries only `{plans_dir, plan_path, sandbox_dir, session_id, project_root, started_at}`; the dead `phase`, `decisions`, `harness_plan_path`, and `archive_plan_path` fields are gone and `PERMITTED_UPDATE_KEYS` shrinks to `{plans_dir, plan_path}`. (Decision 5)
 16. **`docs/plans/` default.** `<repo>/docs/plans/` is the recommended plans_dir; `.claude/plans/` is demoted with a protected-path warning (writes under `.claude/` always prompt and cannot be allowlisted), and a remembered protected plans_dir triggers a warn-and-offer-to-move sentinel. The smooth-write mechanism is a `permissions.allow` snippet in project `.claude/settings.json`, since plugins cannot ship permissions. (Decision 6)
+
+v0.5 (design-review critic fleet): design-quality guidance embedded across plan, critique, and execute stages via the `dp-design-critic` fleet and `skills/design-review/`; see the `## Design review` section of README.md.
+
+v0.6 (folder-per-plan artifact set, design-rationale capture; five decisions resolved via a dogfooded /deep-plan run):
+
+17. **Folder per plan.** Every plan lives in `plans_dir/<slug>/` with fixed member names (`plan.md`, `research.md`, `probes.md`, `design.md`); the draft is born as `<topic>-draft/` and renamed at Phase 4.2 behind a fail-closed `test ! -e` dual guard. The repo's 4.1/4.2 rename naming drift is resolved in favour of 4.2. (Decision 1)
+18. **Folder members plus a generated index.** The appendix splits stay separate artifacts as folder members, and `--archive` regenerates a deterministic `plans_dir/README.md` index (title/status/date read from file content, never mtime; rows sorted by slug; merge conflicts resolved by regenerating, never hand-editing). A standalone `--index` CLI mode lets the execute skill refresh it. (Decision 2)
+19. **Generated Task overview.** `finalize_plan.py --repair` maintains a `## Task overview` table between HTML-comment markers in plan.md, and every task's `**Change**` opens with one plain-English summary sentence (PEP 257 terminator rule), giving both human review moments an at-a-glance view with zero drift. (Decision 3)
+20. **design.md two-phase lifecycle.** The plan phase seeds expanded per-decision rationale (why chosen, why alternatives were rejected, evidence links); the execute phase appends terse per-task Implementation notes gated after each task's verification passes. Terse and scoped by contract: a design document, not a journal. (Decision 4)
+21. **Dual-read, folder-write.** All consumers read both plan shapes; `resolve_slug.py` treats either form as a collision; new plans are always folders; legacy flat plans are approved historical records left untouched. (Decision 5)
+
+## History (flat-file plan layout)
+
+> Everything in this section is the superseded flat-file plan layout (v0.4/v0.5), preserved for rationale only (same convention as the History sections below: where it conflicts with the current design above, the current design wins). v0.6 replaced it with the folder-per-plan artifact set.
+
+### Plan file shape (v0.4/v0.5)
+
+There was a single canonical plan file, and it was project-local: born as `plans_dir/<topic>-draft.md` at the start of Phase 2, renamed to `plans_dir/<slug>.md` at the draft-to-slug rename step (inconsistently called Phase 4.1/4.2 across the repo; v0.6 resolved the drift in favour of 4.2), and edited in place from then on. `finalize_plan.py --archive` rewrote the same file lean in place and split the `## Verification probes` and `## Research dossiers` appendices into dotted sibling files (`<slug>.probes.md`, `<slug>.research.md`) so the implementer file stayed lean.
+
+### Why v0.6 dropped it
+
+The dotted siblings sprawled the plans directory (up to three ungrouped files per plan), the one-line Decisions-table cells were the only home for plan-time rationale, and nothing captured execute-time why-the-code-looks-this-way knowledge at all. The folder-per-plan layout groups every artifact under one slug-named directory, the generated Task overview and README index give humans an at-a-glance view that cannot drift, and design.md carries the rationale through both the plan and execute phases.
 
 ## History (v0.2/v0.3 plan-mode integration)
 

@@ -3,7 +3,8 @@
     "allow": [
       "Edit(/docs/plans/**)",
       "Write(/docs/plans/**)",
-      "Bash(mv docs/plans/*)"
+      "Bash(mv docs/plans/*)",
+      "Bash(test ! -e docs/plans/*)"
     ]
   }
 }

@@ -81,10 +81,63 @@ def test_skill_forbids_plan_mode_tools() -> None:
     assert "${CLAUDE_SESSION_ID}" in body, "SKILL.md must keep the session-id placeholder"
 
 
+def test_skill_pins_folder_lifecycle() -> None:
+    text = DEEP_PLAN_SKILL.read_text()
+
+    # Folder lifecycle: draft born as a folder, stale detection globs folders.
+    assert "*-draft/" in text, "stale-draft detection must glob *-draft/ folders"
+    assert "<topic>-draft/plan.md" in text, "draft must be born as <topic>-draft/plan.md"
+    assert "<topic>-draft.md" not in text, "flat draft naming must be gone"
+    assert "<slug>/plan.md" in text, "canonical plan path must be <slug>/plan.md"
+
+    # Fail-closed rename: both existence guards on the mv line itself.
+    rename_lines = [
+        ln for ln in text.splitlines() if "mv " in ln and ln.count("test ! -e") == 2
+    ]
+    assert rename_lines, "rename must guard folder AND legacy flat form on the mv line"
+
+    # The documented permission snippet covers the guard segments.
+    assert "Bash(test ! -e docs/plans/*)" in text, (
+        "permission snippet must allowlist the test guard segments"
+    )
+
+    # design.md seeding references the shared template.
+    assert "design-md-template.md" in text, "Phase 4.4 must seed design.md from the template"
+
+    # Archive outputs are folder members, never dotted siblings.
+    assert ".probes.md" not in text, "dotted probes sibling must not be an archive output"
+    assert ".research.md" not in text, "dotted research sibling must not be an archive output"
+
+
 def test_execute_skill_targets_the_parser_and_task_api() -> None:
     text = EXECUTE_SKILL.read_text()
     assert "load_tasks.py" in text, "execute skill must invoke the load_tasks.py parser"
     assert "addBlockedBy" in text, "execute skill must wire dependencies via addBlockedBy"
+
+
+def test_execute_skill_dual_reads_and_gates_on_design_notes() -> None:
+    text = EXECUTE_SKILL.read_text()
+
+    # Dual-read discovery: folder plans preferred; the generated README,
+    # dotted siblings, and unfinished drafts never match.
+    assert '*/plan.md' in text, "discovery must prefer the */plan.md folder glob"
+    assert "README" in text, "discovery must exclude the generated README"
+    assert "-draft/plan" in text, "discovery must exclude *-draft/ folders"
+    assert "load_tasks.py" in text, "execute skill must still invoke load_tasks.py"
+
+    # Design-notes gate: the Implementation notes append is ordered after the
+    # verification-pass step and before the TaskUpdate completion wording.
+    verify_pos = text.index("Run the `verification` command.")
+    notes_pos = text.index("## Implementation notes")
+    complete_pos = text.index("mark the task `completed` via `TaskUpdate`")
+    assert verify_pos < notes_pos < complete_pos, (
+        "design.md notes append must sit between verification and completion"
+    )
+
+    # After all tasks: status flip + index refresh, scoped to folder plans.
+    assert "**Status**: executed" in text, "completion must flip the plan status"
+    assert "--index" in text, "completion must refresh the plans index"
+    assert "folder plans" in text, "completion steps must be scoped to folder plans"
 
 
 if __name__ == "__main__":

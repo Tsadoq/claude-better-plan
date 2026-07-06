@@ -43,8 +43,10 @@ This contract is prompt-level: the skill runs in the session's normal
 permission mode and nothing mechanically blocks a write, so honour it
 strictly. The ONLY paths you may write or edit during planning are:
 
-1. The plan file in `plans_dir`: born as `plans_dir/<topic>-draft.md` at the
-   start of Phase 2, renamed to `plans_dir/<slug>.md` at Phase 4.1.
+1. The plan folder in `plans_dir`: born as `plans_dir/<topic>-draft/` (its
+   `plan.md` member) at the start of Phase 2, renamed to `plans_dir/<slug>/`
+   at Phase 4.2. Writable both under its draft and its renamed name; members
+   are `plan.md`, `research.md`, `probes.md`, `design.md`.
 2. The per-session sandbox at `${SANDBOX_DIR}`
    (`/tmp/deep-plan-${CLAUDE_SESSION_ID}/`), for verification probes that
    genuinely need scratch files (for example, writing a tiny pytest and
@@ -60,8 +62,13 @@ project can allowlist the plan paths once in its `.claude/settings.json`
 (plugins cannot ship permissions, so this is the user's one-time setup):
 
 ```json
-{"permissions": {"allow": ["Edit(/docs/plans/**)", "Write(/docs/plans/**)", "Bash(mv docs/plans/*)"]}}
+{"permissions": {"allow": ["Edit(/docs/plans/**)", "Write(/docs/plans/**)", "Bash(mv docs/plans/*)", "Bash(test ! -e docs/plans/*)"]}}
 ```
+
+The `Bash(test ! -e docs/plans/*)` rule exists because compound commands are
+permission-checked per segment: the Phase 4.2 rename prefixes `mv` with two
+`test ! -e` guards, and a `test`-prefixed segment is not matched by the `mv`
+rule.
 
 The subagents are NOT held read-only by `permissionMode` (the harness ignores
 `permissionMode`, `hooks`, and `mcpServers` on plugin-bundled agents). They are
@@ -148,13 +155,13 @@ Then proceed:
 
 5. **No-git fallback** (only if sentinel `no_git`). Use `AskUserQuestion` to ask whether to use `cwd` as project root, abort, or point to an existing project. Default: cwd. Plans dir under cwd. Never `~/.claude/plans/`.
 
-6. **R3: Re-entry, stale drafts, and slug collision.** Before Phase 2 creates a new draft, glob `plans_dir/*-draft.md`. If a stale draft exists (left by an abandoned run):
+6. **R3: Re-entry, stale drafts, and slug collision.** Before Phase 2 creates a new draft, glob `plans_dir/*-draft/` alongside the legacy flat form `plans_dir/*-draft.md`. If a stale draft exists (left by an abandoned run):
 
-   - Read its `## Context` paragraph and `## Decisions made` table.
+   - Read its `## Context` paragraph and `## Decisions made` table (for a draft folder, from its `plan.md` member).
    - Ask via `AskUserQuestion` `[resume from draft, overwrite, keep it and start fresh under another topic name]`. Default: resume. "Resume" seeds Phase 2 with the draft's already-resolved decisions; "overwrite" deletes the stale draft.
    - Because this runs in Phase 0, no orphan draft can reach Phase 4.
 
-   When `resolve_slug.py` reports in Phase 4.1 that `plans_dir/<slug>.md` already exists:
+   When `resolve_slug.py` reports in Phase 4.1 that the slug already exists (as the folder `plans_dir/<slug>/` or the legacy flat file `plans_dir/<slug>.md`):
 
    - Read its `## Context` paragraph and `## Decisions made` table.
    - If similar to current intent: ask via `AskUserQuestion` `[refine existing, overwrite, new with -v2 suffix, custom suffix]`. Default: refine. "Refine" means seed the current plan from the existing file, then edit it in place.
@@ -223,7 +230,7 @@ Goal: enumerate two to five sub-decisions, generate option sets inline, resolve 
 
 **Presentation**: build a dependency DAG. Present each decision in topological order via its own `AskUserQuestion` with 3 to 5 options. Recommended option marked `(Recommended)` and listed first.
 
-**Persistence**: immediately before asking the FIRST decision, create the draft plan file `plans_dir/<topic>-draft.md` (Write) seeded with the skeleton's title, `## Context` paragraph, and an empty `## Decisions made` table, then record it via `setup_session.py --update plan_path=<plans_dir>/<topic>-draft.md`. After each `AskUserQuestion` resolves, immediately `Edit` the draft to append a row to `## Decisions made`. Do NOT batch. The draft is crash-safe: every resolved decision survives an abandoned run.
+**Persistence**: immediately before asking the FIRST decision, create the draft plan file `plans_dir/<topic>-draft/plan.md` (Write; the Write creates the folder) seeded with the skeleton's title, `## Context` paragraph, and an empty `## Decisions made` table, then record it via `setup_session.py --update plan_path=<plans_dir>/<topic>-draft/plan.md`. After each `AskUserQuestion` resolves, immediately `Edit` the draft to append a row to `## Decisions made`. Do NOT batch. The draft is crash-safe: every resolved decision survives an abandoned run.
 
 **Conditional dependencies**: if choosing X for decision N invalidates an option for decision M (downstream), recompute M's options before asking. Example: choosing "Redis" forecloses "use SQLite atomic counters".
 
@@ -261,22 +268,24 @@ python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/resolve_slug.py \
 
 Returns either accepted slug or collision metadata. On collision, follow R3 (Phase 0 step 6).
 
-### 4.2 Rename the draft to its final name
+### 4.2 Rename the draft folder to its final name
 
-Rename the Phase 2 draft in place (this may prompt once in default permission mode unless `Bash(mv docs/plans/*)` is allowlisted; see R1):
+This is the single fail-closed rename point. Rename the Phase 2 draft folder in place, guarding BOTH the folder and the legacy flat form so a collision can never be clobbered (matching the `resolve_slug.py` collision predicate):
 
 ```
-mv <plans_dir>/<topic>-draft.md <plans_dir>/<slug>.md
+test ! -e <plans_dir>/<slug> && test ! -e <plans_dir>/<slug>.md && mv <plans_dir>/<topic>-draft <plans_dir>/<slug>
 ```
+
+If the guarded command fails (either guard trips), do NOT fall through to a bare `mv`: follow the R3 collision flow (Phase 0 step 6) instead. Because the permission rules prefix-match the literal command string, issue the guarded command with project-relative paths (`docs/plans/...`) from the project root when plans_dir is inside the project; fall back to absolute paths otherwise (which may prompt once). See R1 for the one-time allowlist covering both the `mv` and `test ! -e` segments.
 
 Then record the new path:
 
 ```
 python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
-  --update plan_path=<plans_dir>/<slug>.md --session-id ${CLAUDE_SESSION_ID}
+  --update plan_path=<plans_dir>/<slug>/plan.md --session-id ${CLAUDE_SESSION_ID}
 ```
 
-From here on, every plan write edits `plans_dir/<slug>.md` in place. It is the single canonical plan file; there is no mirror.
+From here on, every plan write edits `plans_dir/<slug>/plan.md` in place. It is the single canonical plan file; there is no mirror.
 
 ### 4.3 Perspective fan-out
 
@@ -284,7 +293,9 @@ Launch 2 to 4 `dp-plan-perspective` agents (inherit) in parallel: always one car
 
 ### 4.4 Synthesis
 
-Merge perspectives into a single plan body using `references/plan-file-template.md` as the skeleton, editing `plans_dir/<slug>.md` in place over the draft-seeded sections. Include the `**Tests (TDD)**` subsection only for tasks that produce or modify code; omit it entirely for tasks whose output is markdown, docs, or config. Append the Phase 3 research dossiers verbatim under a `## Research dossiers` appendix so they survive into the archived siblings.
+Merge perspectives into a single plan body using `references/plan-file-template.md` as the skeleton, editing `plans_dir/<slug>/plan.md` in place over the draft-seeded sections. Include the `**Tests (TDD)**` subsection only for tasks that produce or modify code; omit it entirely for tasks whose output is markdown, docs, or config. Append the Phase 3 research dossiers verbatim under a `## Research dossiers` appendix so they survive into the archived folder members.
+
+**Seed design.md**: in the same sub-step, write `<plans_dir>/<slug>/design.md` from `references/design-md-template.md`: one `D{N}` subsection per row of the plan's `## Decisions made` table, carrying the expanded rationale (why chosen, why each alternative was rejected) and evidence links per the template's fallback rules (link into the sibling `research.md` when Phase 3 ran; cite Phase 1 evidence inline or write `n/a` otherwise). Leave `## Implementation notes` empty; the execute skill appends to it per completed task.
 
 **Merge rules**:
 
@@ -308,7 +319,7 @@ Capture each probe's output into the plan's `## Verification probes` appendix as
 <stdout, truncated to ~20 lines>
 ```
 
-Probes that need fixture files write under `${SANDBOX_DIR}`. After approval, `finalize_plan.py --archive` extracts the `## Verification probes` and `## Research dossiers` appendices into sibling files so the final plan stays lean.
+Probes that need fixture files write under `${SANDBOX_DIR}`. After approval, `finalize_plan.py --archive` extracts the `## Verification probes` and `## Research dossiers` appendices into the folder members `probes.md` and `research.md` so the final `plan.md` stays lean.
 
 ## Phase 4.6: Adversarial critique
 
@@ -330,19 +341,19 @@ Once the loop bound is reached or no material findings remain, proceed to Checkp
 
 Finalize mechanically BEFORE asking, so finalization cannot be skipped:
 
-1. If the plan file is somehow still at its `-draft.md` name, complete the Phase 4.2 rename first.
+1. If the plan folder is somehow still at its `-draft/` name, complete the Phase 4.2 rename first.
 2. Run the repair pass:
 
    ```
    python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/finalize_plan.py \
-     --repair --plan <plans_dir>/<slug>.md
+     --repair --plan <plans_dir>/<slug>/plan.md
    ```
 
-   `finalize_plan.py` auto-repairs the plan (normalizes em-dashes and task headers, inserts any missing section or task subsection as `n/a`, strips attribution) and prints `{ok, fixes, warnings}`. It does NOT reject a normal plan: it repairs in one pass. Paraphrase any non-empty `fixes`/`warnings` to the user in two or three lines (for example, a code task missing its `**Tests (TDD)**` block). Only `ok: false` (empty plan, or no tasks at all) warrants looping back to Phase 4.
+   `finalize_plan.py` auto-repairs the plan (normalizes em-dashes and task headers, inserts any missing section or task subsection as `n/a`, strips attribution, regenerates the `## Task overview` table between its markers) and prints `{ok, fixes, warnings}`. It does NOT reject a normal plan: it repairs in one pass. Paraphrase any non-empty `fixes`/`warnings` to the user in two or three lines (for example, a code task missing its `**Tests (TDD)**` block). Only `ok: false` (empty plan, or no tasks at all) warrants looping back to Phase 4.
 
 Then use `AskUserQuestion`:
 
-- Question: "Plan written to <plans_dir>/<slug>.md. What next?"
+- Question: "Plan written to <plans_dir>/<slug>/plan.md. What next?"
 - Header: "Plan review"
 - Options:
   1. "Approve and finalize" (Recommended)
@@ -357,17 +368,17 @@ This question IS the approval gate (see R2): choosing option 1 approves the plan
 
 On approval (Checkpoint 2 option 1):
 
-1. **Split the appendices into siblings** (in place; source and destination are the same file):
+1. **Split the appendices into folder members** (in place; source and destination are the same file):
 
    ```
    python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/finalize_plan.py \
-     --archive --plan <plans_dir>/<slug>.md --plans-dir <plans_dir> --slug <slug>
+     --archive --plan <plans_dir>/<slug>/plan.md --plans-dir <plans_dir> --slug <slug>
    ```
 
-   This rewrites the lean `plans_dir/<slug>.md` in place and writes `<slug>.probes.md` and `<slug>.research.md` siblings when those appendices exist. Then emit EXACTLY this message and stop the turn:
+   This rewrites the lean `plans_dir/<slug>/plan.md` in place, stamps `**Status**: approved` and `**Date**` under the title, writes the `research.md` and `probes.md` members when those appendices exist, and regenerates the plans index at `<plans_dir>/README.md`. Then emit EXACTLY this message and stop the turn:
 
    ```
-   Plan approved and written to {plans_dir}/{slug}.md (with .research.md and .probes.md siblings when present).
+   Plan approved and written to {plans_dir}/{slug}/plan.md (with research.md, probes.md, and design.md members when present; plans index refreshed at {plans_dir}/README.md).
 
    Recommended next: run `/compact` (or `/clear` if you do not need any planning context preserved). The lean plan file is the canonical input for implementation; the planning chatter (agent dossiers, perspective drafts, decision option sets) is no longer needed and consumes context.
 

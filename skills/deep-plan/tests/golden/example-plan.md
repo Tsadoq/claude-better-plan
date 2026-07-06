@@ -19,6 +19,15 @@ flowchart LR
     Middleware --> App
 ```
 
+<!-- deep-plan-task-overview:begin generated: do not edit -->
+## Task overview
+
+| # | Task | Files | Deps | Summary |
+|---|------|-------|------|---------|
+| 1 | Add token-bucket middleware | src/api/rate_limit.py | none | Adds per-key request throttling to the public API. |
+| 2 | Document the rate limiter | docs/rate-limit.md | 1 | Documents the new rate limits for API consumers. |
+<!-- deep-plan-task-overview:end -->
+
 ## Tasks
 
 ### Task 1: Add token-bucket middleware
@@ -27,7 +36,7 @@ flowchart LR
 - src/api/rate_limit.py (new)
 
 **Change**:
-Add a `TokenBucketMiddleware` class in `src/api/rate_limit.py` that reads a per-API-key bucket from Redis. Configurable via `RATE_LIMIT_RPS` (default 10) and `RATE_LIMIT_BURST` (default 20).
+Adds per-key request throttling to the public API. Add a `TokenBucketMiddleware` class in `src/api/rate_limit.py` that reads a per-API-key bucket from Redis. Configurable via `RATE_LIMIT_RPS` (default 10) and `RATE_LIMIT_BURST` (default 20).
 
 **Tests (TDD)**:
 - File: tests/test_rate_limit.py (new)
@@ -48,7 +57,7 @@ uv run pytest tests/test_rate_limit.py::test_burst_over_limit_returns_429 -x
 - docs/rate-limit.md (new)
 
 **Change**:
-Document the `RATE_LIMIT_RPS` and `RATE_LIMIT_BURST` knobs, the per-API-key scope, and the 429 plus `Retry-After` contract for API consumers.
+Documents the new rate limits for API consumers. Document the `RATE_LIMIT_RPS` and `RATE_LIMIT_BURST` knobs, the per-API-key scope, and the 429 plus `Retry-After` contract for API consumers.
 
 **Verification**:
 ```

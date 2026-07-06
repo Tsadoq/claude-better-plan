@@ -9,6 +9,9 @@ to wire `Depends on`).
 Usage:
     load_tasks.py --plan <path>
 
+`--plan` accepts a plan file or a plan folder; a folder resolves to its
+`plan.md` member via finalize_plan.resolve_plan_path.
+
 Output (stdout, JSON):
     {
       "tasks": [
@@ -36,7 +39,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from finalize_plan import _header_pos, _section_body, _section_end
+from finalize_plan import _header_pos, _section_body, _section_end, resolve_plan_path
 
 # A task subsection label line, e.g. `**Change**:` or `**Depends on**: none`.
 _LABEL_RE = re.compile(r"^\*\*(?P<label>[^*]+)\*\*:[ \t]*(?P<inline>.*)$", re.MULTILINE)
@@ -151,10 +154,12 @@ def parse_plan(text: str) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="parse a deep-plan plan file into structured JSON")
-    parser.add_argument("--plan", required=True, help="path to the finalized plan file")
+    parser.add_argument(
+        "--plan", required=True, help="path to the finalized plan file or plan folder"
+    )
     args = parser.parse_args()
 
-    plan = Path(args.plan).expanduser().resolve()
+    plan = resolve_plan_path(Path(args.plan).expanduser().resolve())
     if not plan.exists():
         print(json.dumps({"ok": False, "error": f"plan file not found: {plan}"}))
         return 1
