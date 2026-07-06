@@ -18,6 +18,10 @@ from typing import Any
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 
+# resolve_slug imports finalize_plan as a sibling; put scripts/ on the path so
+# both resolve when the test runner's cwd is elsewhere.
+sys.path.insert(0, str(SCRIPTS))
+
 
 def _load(name: str) -> Any:
     spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
@@ -83,6 +87,32 @@ def test_collision_detected_with_context_and_auto_suffix() -> None:
         assert result["collision"] is True
         assert "token-bucket" in result["collision_context"]
         assert result["auto_v_suffix"] == "rate-limiter-v2"
+
+
+def test_folder_collision_and_v_suffix_skips_both_forms() -> None:
+    # A folder plan alone is a collision, with context read from its plan.md.
+    with tempfile.TemporaryDirectory() as d:
+        plans = Path(d)
+        (plans / "x").mkdir()
+        (plans / "x" / "plan.md").write_text(
+            "# X\n\n## Context\n\nFolder-form plan body.\n\n## Tasks\n"
+        )
+        result = _run_main(["--slug", "x", "--plans-dir", str(plans)])
+        assert result["collision"] is True
+        assert "Folder-form plan body" in result["collision_context"]
+
+    # v-suffix search skips candidates existing in either form.
+    with tempfile.TemporaryDirectory() as d:
+        plans = Path(d)
+        (plans / "x.md").write_text("x")
+        (plans / "x-v2").mkdir()
+        assert resolve.next_v_suffix(plans, "x") == "x-v3"
+
+    # A collision-free slug resolves to the folder-write path.
+    with tempfile.TemporaryDirectory() as d:
+        result = _run_main(["--slug", "fresh", "--plans-dir", d])
+        assert result["collision"] is False
+        assert result["path"].endswith("/fresh/plan.md")
 
 
 def test_no_collision_for_fresh_slug() -> None:

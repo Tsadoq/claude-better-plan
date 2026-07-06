@@ -6,7 +6,7 @@ description: |
   drives a test-first implementation loop task by task in dependency order.
   Invoke after a /deep-plan plan is approved and you are ready to build it, e.g.
   "implement the plan" or "/deep-plan:deep-plan-execute <plan-file>".
-argument-hint: "[plan-file-path]"
+argument-hint: "[plan-path (plan.md file or plan folder)]"
 ---
 
 # /deep-plan:deep-plan-execute
@@ -23,16 +23,20 @@ TodoWrite-style checklist and tell the user dependency wiring is degraded.
 
 ## Step 1: Resolve the plan file
 
-1. If `$ARGUMENTS` names a path, use it as the plan file.
+1. If `$ARGUMENTS` names a path, use it as the plan file. A plan folder is
+   accepted as-is: `load_tasks.py` resolves a folder to its `plan.md` member.
 2. Otherwise, find the project's `plans_dir` and use the most recently modified
-   plan there:
+   plan there, across both shapes (folder plans as `<slug>/plan.md`, legacy
+   flat plans as `<slug>.md`):
 
    ```
    ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
    PROJECTS="${XDG_STATE_HOME:-$HOME/.local/state}/deep-plan/projects.json"
    PLANS_DIR="$(python3 -c "import json,sys; d=json.load(open('$PROJECTS')); print(d.get('$ROOT',{}).get('plans_dir',''))" 2>/dev/null)"
-   # pick newest *.md that is not a .probes.md / .research.md sibling
-   ls -t "$PLANS_DIR"/*.md 2>/dev/null | grep -vE '\.(probes|research)\.md$' | head -1
+   # newest mtime wins across both shapes; the path-anchored exclusion keeps the
+   # generated README, legacy dotted siblings, and unfinished *-draft/ folders
+   # from ever matching
+   ls -td "$PLANS_DIR"/*/plan.md "$PLANS_DIR"/*.md 2>/dev/null | grep -vE '(/(README|[^/]*\.(probes|research))\.md$|-draft/plan\.md$)' | head -1
    ```
 
    If no plan file can be resolved, ask the user via `AskUserQuestion` for the
@@ -116,12 +120,37 @@ empty output means the tree is clean, use `HEAD`), then:
    Fix `material` findings within the task and re-run the `verification`
    command before completing; log `minor` findings in the task completion
    note without blocking.
-5. On green, mark the task `completed` via `TaskUpdate`. On red you cannot fix
+5. **Record the implementation note (MANDATORY for folder plans).** After
+   verification passes and before the task is marked completed: append one
+   terse `### Task {N}: {name}` entry (2 to 4 lines: deviations from the plan,
+   gotchas hit, non-obvious code shapes) under `## Implementation notes` in
+   the plan folder's sibling `design.md`. If a crashed or hand-made folder
+   lacks `design.md`, create it first from
+   `${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/references/design-md-template.md`.
+   Legacy flat plans (no folder) skip this append.
+6. On green, mark the task `completed` via `TaskUpdate`. On red you cannot fix
    within the task's scope, stop and report rather than expanding scope.
 
 Run verification commands exactly as written in the plan. If a command assumes
 `uv run` but the project has no `pyproject.toml`, fall back to `python3` and note
 the substitution.
+
+## Step 6: Completion (folder plans only)
+
+After ALL tasks are completed, for folder plans only:
+
+1. Flip the `**Status**: approved` line in the plan's `plan.md` to
+   `**Status**: executed`. When no Status line exists, add
+   `**Status**: executed` under the H1 rather than failing.
+2. Refresh the plans index:
+
+   ```
+   python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/finalize_plan.py \
+     --index --plans-dir <plans_dir>
+   ```
+
+Legacy flat plans skip both steps: they carry no Status line and may predate
+the README index.
 
 ## Anti-patterns
 
@@ -132,3 +161,4 @@ the substitution.
 - Re-opening a decision already settled in `## Decisions made` without asking.
 - Batching unrelated tasks into one `TaskCreate`.
 - Marking a task completed with unresolved material design findings.
+- Marking a task completed without its design.md implementation note (folder plans).

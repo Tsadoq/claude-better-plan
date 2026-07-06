@@ -39,11 +39,13 @@ You are at the start of /deep-plan. Before doing anything else:
        python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
          --update plans_dir=<ABS_PATH> --session-id ${CLAUDE_SESSION_ID}
 
-4. Stale-draft detection (BEFORE Phase 2 may create a new draft): glob plans_dir/*-draft.md.
-   If a draft exists (left by an abandoned run), read its ## Context and ## Decisions made,
-   then ask via AskUserQuestion [resume from draft, overwrite, start fresh under another
-   topic name]. Default: resume (seed Phase 2 with the draft's already-resolved decisions).
-   Overwrite deletes the stale draft. No orphan draft may reach Phase 4.
+4. Stale-draft detection (BEFORE Phase 2 may create a new draft): glob plans_dir/*-draft/
+   alongside the legacy flat form plans_dir/*-draft.md. If a draft exists (left by an
+   abandoned run), read its ## Context and ## Decisions made (for a draft folder, from
+   its plan.md member), then ask via AskUserQuestion [resume from draft, overwrite, start
+   fresh under another topic name]. Default: resume (seed Phase 2 with the draft's
+   already-resolved decisions). Overwrite deletes the stale draft. No orphan draft may
+   reach Phase 4.
 
 5. After state is bootstrapped, print a single short status sentence to the user and
    proceed to Phase 1. Do not narrate Phase 0's mechanics.
@@ -121,10 +123,11 @@ its own AskUserQuestion call. Each option set has 3 to 5 options, with the recom
 option marked "(Recommended)" and listed first.
 
 Immediately before asking the FIRST decision, create the draft plan file
-plans_dir/<topic>-draft.md (Write) seeded with the skeleton's title, ## Context paragraph,
-and an empty ## Decisions made table, then record it:
+plans_dir/<topic>-draft/plan.md (Write; the Write creates the folder) seeded with the
+skeleton's title, ## Context paragraph, and an empty ## Decisions made table, then
+record it:
     python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
-      --update plan_path=<plans_dir>/<topic>-draft.md --session-id ${CLAUDE_SESSION_ID}
+      --update plan_path=<plans_dir>/<topic>-draft/plan.md --session-id ${CLAUDE_SESSION_ID}
 
 After each AskUserQuestion resolves, immediately Edit the draft to append a row to
 the `## Decisions made` table. This is the persistence point: do NOT batch. The draft is
@@ -178,13 +181,17 @@ Sub-steps in order:
          --slug <s> --plans-dir <d>
    - On collision, follow the section "Slug generation and collision handling" in PLAN.md.
 
-2. Rename the Phase 2 draft to its final name (may prompt once in default permission
-   mode unless `Bash(mv docs/plans/*)` is allowlisted), then record the new path:
-       mv <plans_dir>/<topic>-draft.md <plans_dir>/<slug>.md
+2. Rename the Phase 2 draft folder to its final name (Phase 4.2, the single fail-closed
+   rename point; guard BOTH the folder and the legacy flat form, and on guard failure
+   follow the R3 collision flow instead of clobbering), then record the new path:
+       test ! -e <plans_dir>/<slug> && test ! -e <plans_dir>/<slug>.md && mv <plans_dir>/<topic>-draft <plans_dir>/<slug>
        python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
-         --update plan_path=<plans_dir>/<slug>.md --session-id ${CLAUDE_SESSION_ID}
-   From here on every plan write edits plans_dir/<slug>.md in place. It is the single
-   canonical plan file; there is no mirror.
+         --update plan_path=<plans_dir>/<slug>/plan.md --session-id ${CLAUDE_SESSION_ID}
+   Issue the guarded command with project-relative paths (docs/plans/...) from the
+   project root when plans_dir is inside the project (permission rules prefix-match the
+   literal command string); fall back to absolute paths otherwise (may prompt once).
+   From here on every plan write edits plans_dir/<slug>/plan.md in place. It is the
+   single canonical plan file; there is no mirror.
 
 3. Perspective fan-out: launch dp-plan-perspective agents in parallel. One instance
    always carries the deep-modules perspective; the picked count scales by depth
@@ -193,11 +200,16 @@ Sub-steps in order:
    evident priorities. See references/perspectives.md for selection heuristics.
 
 4. Synthesis: merge perspectives into a single plan body using
-   references/plan-file-template.md as the skeleton, editing plans_dir/<slug>.md
+   references/plan-file-template.md as the skeleton, editing plans_dir/<slug>/plan.md
    in place over the draft-seeded sections. Include the **Tests (TDD)** subsection
    only for tasks that produce or modify code; omit it for markdown, docs, or
    config tasks. Append the Phase 3 dossiers verbatim under a ## Research dossiers
-   appendix so they survive into the archived siblings.
+   appendix so they survive into the archived folder members.
+   In the same sub-step, seed <plans_dir>/<slug>/design.md from
+   references/design-md-template.md: one D{N} subsection per decision row with the
+   expanded rationale and evidence links (into the sibling research.md when Phase 3
+   ran; Phase 1 evidence inline or n/a otherwise). Leave ## Implementation notes
+   empty; the execute skill appends to it per completed task.
    Merge rules:
    - When perspectives disagree on task ordering or test scope, prefer the union (additive).
    - When perspectives disagree on architectural choice, that means a sub-decision was
@@ -250,10 +262,10 @@ Act on findings:
   non-empty ## Open questions blocks /deep-plan:deep-plan-execute later).
 
 When the loop bound is reached or no material findings remain, finalize mechanically
-BEFORE asking: complete the draft-to-slug rename if still pending, then run the
+BEFORE asking: complete the draft-to-slug folder rename if still pending, then run the
 finalize_plan.py --repair pass (semantics in the Phase 5 fragment). Then present
 Checkpoint 2:
-    Q: "Plan written to <plans_dir>/<slug>.md. What next?"
+    Q: "Plan written to <plans_dir>/<slug>/plan.md. What next?"
     Header: "Plan review"
     Options:
       1. "Approve and finalize" (Recommended)
@@ -272,23 +284,25 @@ Other branches loop back appropriately.
 1. The repair pass runs BEFORE the Checkpoint 2 question (it cannot be skipped,
    because it precedes the approval):
        python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/finalize_plan.py \
-         --repair --plan <plans_dir>/<slug>.md
+         --repair --plan <plans_dir>/<slug>/plan.md
 
    finalize_plan.py auto-repairs the plan (em-dashes, task headers, missing
-   sections and task subsections inserted as n/a, attribution stripped) and
-   prints {ok, fixes, warnings}. It does NOT reject a normal plan: it repairs in
+   sections and task subsections inserted as n/a, attribution stripped, the
+   ## Task overview table regenerated between its markers) and prints
+   {ok, fixes, warnings}. It does NOT reject a normal plan: it repairs in
    one pass. Paraphrase any non-empty fixes/warnings to the user in two or three
    lines (for example, a code task missing its **Tests (TDD)** block). Only
    ok=false (empty plan, or no tasks at all) warrants looping back to Phase 4.
 
 2. On approval (Checkpoint 2 option 1, "Approve and finalize"): split the appendix
-   sections into sibling files in place (source and destination are the same file),
+   sections into folder members in place (source and destination are the same file),
    then emit EXACTLY the handoff message:
        python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/finalize_plan.py \
-         --archive --plan <plans_dir>/<slug>.md --plans-dir <plans_dir> --slug <slug>
+         --archive --plan <plans_dir>/<slug>/plan.md --plans-dir <plans_dir> --slug <slug>
 
-       Plan approved and written to {plans_dir}/{slug}.md (with .research.md and
-       .probes.md siblings when present).
+       Plan approved and written to {plans_dir}/{slug}/plan.md (with research.md,
+       probes.md, and design.md members when present; plans index refreshed at
+       {plans_dir}/README.md).
 
        Recommended next: run `/compact` (or `/clear` if you do not need any planning
        context preserved). The lean plan file is the canonical input for implementation;

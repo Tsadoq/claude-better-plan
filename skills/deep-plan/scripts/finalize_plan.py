@@ -12,16 +12,20 @@ Two modes:
    (empty file, or no tasks at all).
 
 2. Archive (run after Checkpoint 2 approval):
-       finalize_plan.py --archive --plan <plans-dir>/<slug>.md \
+       finalize_plan.py --archive --plan <plans-dir>/<slug>/plan.md \
          --plans-dir <dir> --slug <slug>
-   Repairs, then splits the appendix sections (`## Verification probes`,
-   `## Research dossiers`) into sibling files and rewrites the lean plan
-   at <plans-dir>/<slug>.md. Source and destination are the same file;
-   the plan text is fully read before any write, so the in-place split
-   is safe. Prints a JSON report with the written paths.
+   Repairs, stamps **Status**/**Date** under the H1 when absent, then
+   splits the appendix sections (`## Verification probes`,
+   `## Research dossiers`) into the folder members probes.md and
+   research.md and rewrites the lean plan at <plans-dir>/<slug>/plan.md.
+   Source and destination may be the same file; the plan text is fully
+   read before any write, so the in-place split is safe. Prints a JSON
+   report with the written paths.
 
-The single canonical plan file is plans_dir/<slug>.md (born as a
--draft.md in Phase 2, renamed at Phase 4.1); there is no mirror copy.
+Every plan lives in its own folder plans_dir/<slug>/ with fixed member
+names (plan.md, research.md, probes.md, design.md). The draft is born as
+plans_dir/<topic>-draft/plan.md in Phase 2 and the folder is renamed to
+plans_dir/<slug>/ at Phase 4.2; there is no mirror copy.
 """
 
 from __future__ import annotations
@@ -30,8 +34,29 @@ import argparse
 import json
 import re
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Any
+
+# Plan-folder layout: every plan lives in plans_dir/<slug>/ with these
+# fixed member names. resolve_slug.py and load_tasks.py import them from
+# here so the layout has a single source of truth.
+PLAN_FILE_NAME = "plan.md"
+RESEARCH_FILE_NAME = "research.md"
+PROBES_FILE_NAME = "probes.md"
+DESIGN_FILE_NAME = "design.md"
+DRAFT_SUFFIX = "-draft"
+
+# Normative marker literals for generated regions. Content between a
+# begin/end pair is owned by this script and rewritten wholesale.
+OVERVIEW_BEGIN = "<!-- deep-plan-task-overview:begin generated: do not edit -->"
+OVERVIEW_END = "<!-- deep-plan-task-overview:end -->"
+INDEX_BEGIN = "<!-- deep-plan-index:begin generated: do not edit -->"
+INDEX_END = "<!-- deep-plan-index:end -->"
+
+# The authoritative status vocabulary for the `**Status**:` line in
+# plan.md and the plans_dir README index.
+STATUSES = ("draft", "approved", "executed", "legacy")
 
 REQUIRED_SECTIONS = [
     "## Context",
@@ -73,6 +98,17 @@ ATTRIBUTION = [
     re.compile(r"^\U0001f916 Generated with.*$", re.MULTILINE),
     re.compile(r"^Generated with \[Claude Code\].*$", re.MULTILINE),
 ]
+
+
+# --------------------------------------------------------------------------
+# Path helpers
+# --------------------------------------------------------------------------
+
+def resolve_plan_path(path: Path) -> Path:
+    """Resolve a plan folder to its plan.md member; pass files through."""
+    if path.is_dir():
+        return path / PLAN_FILE_NAME
+    return path
 
 
 # --------------------------------------------------------------------------
@@ -227,6 +263,129 @@ def ensure_task_subsections(text: str, fixes: list[str], warnings: list[str]) ->
 
 
 # --------------------------------------------------------------------------
+# Task overview generation
+# --------------------------------------------------------------------------
+
+_TASK_LABEL_RE = re.compile(r"^\*\*(?P<label>[^*]+)\*\*:[ \t]*(?P<inline>.*)$", re.MULTILINE)
+
+
+def first_sentence(text: str) -> str:
+    """First sentence of a Change block, PEP 257/Javadoc terminator rule.
+
+    The sentence ends at the first `.` followed by whitespace or end of
+    text, so dots inside versions (`v0.5.0`) and file names
+    (`finalize_plan.py`) do not terminate it. Falls back to the whole
+    first line when no terminator exists. Newlines and whitespace runs
+    collapse to single spaces and `|` is escaped so the result is always
+    table-safe.
+    """
+    flat = re.sub(r"\s+", " ", text.strip())
+    m = re.search(r"\.(?=\s|$)", flat)
+    if m:
+        out = flat[: m.end()]
+    else:
+        first_line = text.strip().splitlines()[0] if text.strip() else ""
+        out = re.sub(r"\s+", " ", first_line).strip()
+    return out.replace("|", "\\|")
+
+
+def _task_subsections(block: str) -> dict[str, str]:
+    """Map each `**Label**` in a task block to its body text."""
+    matches = list(_TASK_LABEL_RE.finditer(block))
+    out: dict[str, str] = {}
+    for i, m in enumerate(matches):
+        label = m.group("label").strip()
+        body_end = matches[i + 1].start() if i + 1 < len(matches) else len(block)
+        inline = m.group("inline").strip()
+        rest = block[m.end() : body_end].strip()
+        out[label] = (inline + ("\n" + rest if rest else "")).strip() if inline else rest
+    return out
+
+
+def _overview_tasks(text: str) -> list[dict[str, Any]]:
+    tasks_pos = _header_pos(text, "## Tasks")
+    if tasks_pos == -1:
+        return []
+    body = text[tasks_pos : _section_end(text, tasks_pos)]
+    parts = re.split(r"(^### Task \d+:.*$)", body, flags=re.MULTILINE)
+    tasks: list[dict[str, Any]] = []
+    for k in range(1, len(parts), 2):
+        header = parts[k]
+        block = parts[k + 1] if k + 1 < len(parts) else ""
+        m = re.match(r"^### Task (\d+):[ \t]*(.*)$", header.strip())
+        if not m:
+            continue
+        subs = _task_subsections(block)
+        tasks.append(
+            {
+                "n": int(m.group(1)),
+                "subject": m.group(2).strip(),
+                "files": _target_files(block),
+                "deps": re.findall(r"\d+", subs.get("Depends on", "")),
+                "change": subs.get("Change", ""),
+            }
+        )
+    return tasks
+
+
+def render_task_overview(tasks: list[dict[str, Any]]) -> str:
+    """Render the generated Task overview region, markers included."""
+    lines = [
+        OVERVIEW_BEGIN,
+        "## Task overview",
+        "",
+        "| # | Task | Files | Deps | Summary |",
+        "|---|------|-------|------|---------|",
+    ]
+    for t in tasks:
+        files = ", ".join(t["files"]) if t["files"] else "n/a"
+        deps = ", ".join(t["deps"]) if t["deps"] else "none"
+        cells = [
+            str(t["n"]),
+            str(t["subject"]).replace("|", "\\|"),
+            files.replace("|", "\\|"),
+            deps,
+            first_sentence(t["change"]),
+        ]
+        lines.append("| " + " | ".join(cells) + " |")
+    lines.append(OVERVIEW_END)
+    return "\n".join(lines)
+
+
+def upsert_task_overview(text: str, fixes: list[str]) -> str:
+    """Regenerate the Task overview region between its markers.
+
+    Runs after ensure_sections/ensure_task_subsections so `## Architecture`
+    and `## Tasks` are guaranteed present. Replaces an in-place region
+    wholesale; inserts it immediately before `## Tasks` when missing; a
+    stray region outside the Architecture..Tasks span is deleted and
+    reinserted at the anchor (self-healing).
+    """
+    tasks = _overview_tasks(text)
+    tasks_pos = _header_pos(text, "## Tasks")
+    if tasks_pos == -1 or not tasks:
+        return text
+    region = render_task_overview(tasks)
+    begin = text.find(OVERVIEW_BEGIN)
+    end = text.find(OVERVIEW_END)
+    if begin != -1 and end != -1 and end > begin:
+        end_close = end + len(OVERVIEW_END)
+        arch_pos = _header_pos(text, "## Architecture")
+        if arch_pos != -1 and arch_pos < begin and end_close <= tasks_pos:
+            if text[begin:end_close] != region:
+                text = text[:begin] + region + text[end_close:]
+                fixes.append("regenerated Task overview table")
+            return text
+        text = text[:begin].rstrip() + "\n\n" + text[end_close:].lstrip()
+        tasks_pos = _header_pos(text, "## Tasks")
+        if tasks_pos == -1:
+            return text + "\n" + region + "\n"
+    text = text[:tasks_pos].rstrip() + "\n\n" + region + "\n\n" + text[tasks_pos:]
+    fixes.append("inserted generated Task overview before ## Tasks")
+    return text
+
+
+# --------------------------------------------------------------------------
 # Public API
 # --------------------------------------------------------------------------
 
@@ -244,6 +403,7 @@ def repair(text: str) -> tuple[str, dict[str, Any]]:
     text = normalize_dashes(text, fixes)
     text = ensure_sections(text, fixes, warnings)
     text = ensure_task_subsections(text, fixes, warnings)
+    text = upsert_task_overview(text, fixes)
     text = re.sub(r"\n{3,}", "\n\n", text).strip() + "\n"
 
     has_tasks = bool(re.search(r"^### Task \d+:", text, re.MULTILINE))
@@ -284,49 +444,140 @@ def cmd_repair(plan: Path) -> dict[str, Any]:
     return report
 
 
+def stamp_status_date(text: str, status: str, date: str) -> str:
+    """Insert **Status**/**Date** lines under the H1, only when absent.
+
+    Existing values are preserved so a re-archive is deterministic.
+    """
+    m = re.search(r"^# .*$", text, re.MULTILINE)
+    if not m:
+        return text
+    stamps: list[str] = []
+    if not re.search(r"^\*\*Status\*\*:", text, re.MULTILINE):
+        stamps.append(f"**Status**: {status}")
+    if not re.search(r"^\*\*Date\*\*:", text, re.MULTILINE):
+        stamps.append(f"**Date**: {date}")
+    if not stamps:
+        return text
+    return text[: m.end()] + "\n\n" + "\n".join(stamps) + text[m.end() :]
+
+
 def cmd_archive(plan: Path, plans_dir: Path, slug: str) -> dict[str, Any]:
+    plan = resolve_plan_path(plan)
     if not plan.exists():
         return {"ok": False, "warnings": [f"plan file not found: {plan}"]}
     repaired, report = repair(plan.read_text())
     lean, probes, research = split_appendices(repaired)
-    plans_dir.mkdir(parents=True, exist_ok=True)
+    lean = stamp_status_date(lean, "approved", date.today().isoformat())
 
-    archive_path = plans_dir / f"{slug}.md"
+    folder = plans_dir / slug
+    folder.mkdir(parents=True, exist_ok=True)
+
+    archive_path = folder / PLAN_FILE_NAME
     archive_path.write_text(lean)
     written = {"archive_path": str(archive_path)}
 
     if probes:
-        probes_path = plans_dir / f"{slug}.probes.md"
+        probes_path = folder / PROBES_FILE_NAME
         probes_path.write_text(probes.rstrip() + "\n")
         written["probes_path"] = str(probes_path)
     if research:
-        research_path = plans_dir / f"{slug}.research.md"
+        research_path = folder / RESEARCH_FILE_NAME
         research_path.write_text(research.rstrip() + "\n")
         written["research_path"] = str(research_path)
 
+    written["index_path"] = str(regenerate_index(plans_dir))
+
     return {"ok": report["ok"], "fixes": report["fixes"], "warnings": report["warnings"], **written}
+
+
+def regenerate_index(plans_dir: Path) -> Path:
+    """Regenerate the plans README index between its markers.
+
+    Deterministic: every cell derives from file content (title, Status,
+    Date), never mtime, and rows sort by slug, so a merge conflict in
+    README.md is resolved by regenerating rather than hand-editing.
+    """
+    entries: list[tuple[str, str, str, str]] = []
+    for member in plans_dir.glob(f"*/{PLAN_FILE_NAME}"):
+        slug = member.parent.name
+        entries.append((slug, f"{slug}/{PLAN_FILE_NAME}", member.read_text(), "draft"))
+    for flat in plans_dir.glob("*.md"):
+        if flat.name == "README.md" or flat.name.endswith((".probes.md", ".research.md")):
+            continue
+        entries.append((flat.stem, flat.name, flat.read_text(), "legacy"))
+
+    rows: list[str] = []
+    for slug, link, text, default_status in sorted(entries, key=lambda e: e[0]):
+        m = re.search(r"^# (.+)$", text, re.MULTILINE)
+        title = m.group(1).strip() if m else slug
+        sm = re.search(r"^\*\*Status\*\*:[ \t]*(.+)$", text, re.MULTILINE)
+        status = sm.group(1).strip() if sm else default_status
+        dm = re.search(r"^\*\*Date\*\*:[ \t]*(.+)$", text, re.MULTILINE)
+        stamped = dm.group(1).strip() if dm else ""
+        rows.append(f"| [{slug}]({link}) | {title} | {status} | {stamped} |")
+
+    region = "\n".join(
+        [
+            INDEX_BEGIN,
+            "| Plan | Title | Status | Date |",
+            "|------|-------|--------|------|",
+            *rows,
+            INDEX_END,
+        ]
+    )
+
+    readme = plans_dir / "README.md"
+    if readme.exists():
+        text = readme.read_text()
+        begin = text.find(INDEX_BEGIN)
+        end = text.find(INDEX_END)
+        if begin != -1 and end != -1 and end > begin:
+            text = text[:begin] + region + text[end + len(INDEX_END) :]
+        else:
+            text = text.rstrip() + "\n\n" + region + "\n"
+    else:
+        text = "# Plans\n\n" + region + "\n"
+    readme.write_text(text)
+    return readme
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="deep-plan plan repairer and archiver")
     parser.add_argument("--repair", action="store_true", help="normalize the plan in place")
     parser.add_argument(
-        "--archive", action="store_true", help="split appendix siblings, rewrite lean plan"
+        "--archive", action="store_true", help="split appendix members, rewrite lean plan"
     )
-    parser.add_argument("--plan", required=True, help="path to the plan file")
-    parser.add_argument("--plans-dir", help="archive destination dir (archive mode)")
-    parser.add_argument("--slug", help="archive base name (archive mode)")
+    parser.add_argument(
+        "--index", action="store_true", help="regenerate the plans_dir README index"
+    )
+    parser.add_argument("--plan", help="path to the plan file (repair/archive modes)")
+    parser.add_argument("--plans-dir", help="plans directory (archive/index modes)")
+    parser.add_argument("--slug", help="archive folder name (archive mode)")
     args = parser.parse_args()
 
-    plan = Path(args.plan).resolve()
-
-    if args.archive:
-        if not args.plans_dir or not args.slug:
-            print(json.dumps({"ok": False, "warnings": ["--archive needs --plans-dir and --slug"]}))
+    if args.index:
+        if not args.plans_dir:
+            print(json.dumps({"ok": False, "warnings": ["--index needs --plans-dir"]}))
             return 2
-        result = cmd_archive(plan, Path(args.plans_dir).expanduser().resolve(), args.slug)
+        index_path = regenerate_index(Path(args.plans_dir).expanduser().resolve())
+        result: dict[str, Any] = {"ok": True, "index_path": str(index_path)}
+    elif args.archive:
+        if not args.plan or not args.plans_dir or not args.slug:
+            print(
+                json.dumps(
+                    {"ok": False, "warnings": ["--archive needs --plan, --plans-dir and --slug"]}
+                )
+            )
+            return 2
+        result = cmd_archive(
+            Path(args.plan).resolve(), Path(args.plans_dir).expanduser().resolve(), args.slug
+        )
     else:
-        result = cmd_repair(plan)
+        if not args.plan:
+            print(json.dumps({"ok": False, "warnings": ["--repair needs --plan"]}))
+            return 2
+        result = cmd_repair(Path(args.plan).resolve())
 
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result.get("ok", False) else 1
