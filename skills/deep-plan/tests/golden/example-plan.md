@@ -41,6 +41,12 @@ Adds per-key request throttling to the public API. Add a `TokenBucketMiddleware`
 **Tests (TDD)**:
 - File: tests/test_rate_limit.py (new)
 - Test name: `test_burst_over_limit_returns_429`
+- Behavior: requests beyond the configured burst within one second are rejected.
+- Level: component -- the middleware plus a real Redis, the lowest level where bucket state is observable.
+- Real vs mocked: the middleware and Redis run real; only the clock is frozen.
+- Setup: local to the test; the bucket key and the request loop live in the test body.
+- Seams: none introduced.
+- Dedup: unit tests cover bucket arithmetic only; no lower level observes throttling.
 - Asserts: with RPS 10 and burst 20, the 21st request within one second returns HTTP 429 with a `Retry-After` header.
 - This test MUST fail before implementation begins.
 

@@ -74,6 +74,18 @@ def test_fleet_orchestration_contract() -> None:
     )
 
 
+def test_fleet_recipe_is_critic_parametric() -> None:
+    text = FLEET_ORCHESTRATION.read_text()
+
+    assert "args.agentType" in text, (
+        "the Workflow script must read the critic type from args.agentType"
+    )
+    for token in ("dp-test-critic", "test-principles.md"):
+        assert token in text, (
+            f"fleet spec must name the test-critic pairing token {token!r}"
+        )
+
+
 def test_design_review_skill_contract() -> None:
     assert DESIGN_REVIEW_SKILL.exists(), f"missing skill file: {DESIGN_REVIEW_SKILL}"
     text = DESIGN_REVIEW_SKILL.read_text()

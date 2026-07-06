@@ -46,6 +46,12 @@ flowchart LR
 **Tests (TDD)**:   <!-- include ONLY for tasks that create or modify code; omit entirely for markdown, docs, or config tasks -->
 - File: {path/to/test_x.py} (new|modify)
 - Test name: `{test_function_name}`
+- Behavior: {the one sentence naming the single behavior this test protects}
+- Level: {unit | component | system -- the lowest level that can observe the behavior}
+- Real vs mocked: {what runs real; nothing the plan's code owns gets patched}
+- Setup: {local to the test, or the named shared fixture and why}
+- Seams: {none, or justify -- no production seam introduced only for the test}
+- Dedup: {what a lower level already covers that this test must not re-assert}
 - Asserts: {1 to 2 sentences naming the exact assertion: input shape, expected output, expected status code or exception.}
 - This test MUST fail before implementation begins. The implementation turn writes the test first, runs it (must fail), then implements, then runs again (must pass).
 
@@ -93,7 +99,7 @@ skipped. finalize_plan.py --archive moves this section into the folder member `r
 - The `## Task overview` region between its HTML-comment markers is fully generated content owned by `finalize_plan.py --repair`; hand edits inside the markers are discarded on the next run.
 - Task numbering is dense: 1, 2, 3, no gaps, no decimal subtasks. If a task is too large, split it into two.
 - `**Target files**` lists each file on its own line with `(new)`, `(modify)`, or `(delete)` suffix.
-- `**Tests (TDD)**`, when present (code tasks), names a file path AND a test function name AND the must-fail-first verification step.
+- `**Tests (TDD)**`, when present (code tasks), carries all nine field bullets in the order File, Test name, Behavior, Level, Real vs mocked, Setup, Seams, Dedup, Asserts (the `TESTS_FIELDS` tuple in `finalize_plan.py` is normative; `--repair` warns per missing field) plus the must-fail-first line. Fill the fields by applying `## Plan-time authoring rules` of `${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/references/test-principles.md`.
 - `**Verification**` is exactly one shell command in a code fence. Multi-step verification splits the task in two.
 - `**Depends on**` is either `none` or comma-separated integers referring to other task numbers in this plan.
 - Mermaid blocks use ` ```mermaid ` fences. No PlantUML. No ASCII art (per user rule).

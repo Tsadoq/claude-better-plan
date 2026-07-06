@@ -202,7 +202,9 @@ Sub-steps in order:
 4. Synthesis: merge perspectives into a single plan body using
    references/plan-file-template.md as the skeleton, editing plans_dir/<slug>/plan.md
    in place over the draft-seeded sections. Include the **Tests (TDD)** subsection
-   only for tasks that produce or modify code; omit it for markdown, docs, or
+   only for tasks that produce or modify code, carrying the template's full field
+   schema per code task and applying ## Plan-time authoring rules of
+   references/test-principles.md; omit it for markdown, docs, or
    config tasks. Append the Phase 3 dossiers verbatim under a ## Research dossiers
    appendix so they survive into the archived folder members.
    In the same sub-step, seed <plans_dir>/<slug>/design.md from
@@ -244,8 +246,10 @@ ${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/fleet-orchestration.md: on
 dp-design-critic (haiku) per red-flag cluster in design-principles.md, reviewing the
 synthesized plan body and its ## Architecture section as a design artifact, then the
 recipe's adversarial verify stage (Workflow path when available, fallback otherwise).
-Design findings carry the same material|minor tags, merge into the handling below,
-and share the depth loop bounds; no separate knobs.
+Also run the same recipe with agentType deep-plan:dp-test-critic: one finder per H3
+cluster of ## Review-time red flags in test-principles.md, reviewing every task's
+**Tests (TDD)** block. Design and test findings carry the same material|minor tags,
+merge into the handling below, and share the depth loop bounds; no separate knobs.
 
 Count and loop bound scale by depth (SKILL.md Depth scaling table):
 - shallow:    one quick pass, no loop.

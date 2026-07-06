@@ -19,10 +19,17 @@ from pathlib import Path
 
 AGENTS_DIR = Path(__file__).resolve().parents[3] / "agents"
 
-# Research agents and the design critic have no legitimate need for Bash, so
-# they block it outright and become genuinely write-free. The Bash-keeping
-# agents (explore, perspective, plan critic) need it for read-only inspection.
-BASH_FREE = {"dp-research-shallow", "dp-research-deep", "dp-source-ingest", "dp-design-critic"}
+# Research agents and the critic fleet leaves have no legitimate need for
+# Bash, so they block it outright and become genuinely write-free. The
+# Bash-keeping agents (explore, perspective, plan critic) need it for
+# read-only inspection.
+BASH_FREE = {
+    "dp-research-shallow",
+    "dp-research-deep",
+    "dp-source-ingest",
+    "dp-design-critic",
+    "dp-test-critic",
+}
 
 WRITE_TOOLS = {"Write", "Edit", "NotebookEdit"}
 IGNORED_FIELDS = ("permissionMode", "hooks", "mcpServers")
@@ -91,6 +98,24 @@ def test_design_critic_agent_present() -> None:
     required = WRITE_TOOLS | {"Bash", "Agent"}
     missing = required - disallowed
     assert not missing, f"{path.name}: disallowedTools missing {sorted(missing)}"
+
+
+def test_test_critic_agent_present() -> None:
+    path = AGENTS_DIR / "dp-test-critic.md"
+    assert path.exists(), f"missing test critic agent: {path}"
+    fm = _frontmatter(path.read_text())
+    assert fm, f"{path.name}: missing frontmatter"
+
+    assert not _has_tools_allowlist(fm), (
+        f"{path.name}: declares a `tools:` allowlist, which strips ambient MCP access"
+    )
+
+    disallowed = _disallowed_tools(fm)
+    required = WRITE_TOOLS | {"Bash", "Agent"}
+    missing = required - disallowed
+    assert not missing, f"{path.name}: disallowedTools missing {sorted(missing)}"
+
+    assert "dp-test-critic" in BASH_FREE, "dp-test-critic must be registered bash-free"
 
 
 if __name__ == "__main__":

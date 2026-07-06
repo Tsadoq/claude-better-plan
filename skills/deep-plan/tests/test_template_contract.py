@@ -96,6 +96,34 @@ def test_golden_plan_has_no_fixes_or_warnings() -> None:
     assert report["warnings"] == [], f"golden plan should have no warnings, got {report['warnings']}"
 
 
+def _tests_block(text: str, source: str) -> str:
+    start = text.find("**Tests (TDD)**")
+    assert start != -1, f"{source}: no **Tests (TDD)** block found"
+    end = text.find("**Verification**", start)
+    assert end != -1, f"{source}: Tests block not followed by **Verification**"
+    return text[start:end]
+
+
+def test_template_and_golden_declare_full_tests_schema() -> None:
+    skeleton = _extract_skeleton(TEMPLATE.read_text())
+    golden = GOLDEN.read_text()
+    for source, block in (
+        ("template skeleton", _tests_block(skeleton, "template skeleton")),
+        ("golden plan", _tests_block(golden, "golden plan")),
+    ):
+        # Labels come from finalize_plan.TESTS_FIELDS (never re-typed here);
+        # bullet order must follow the tuple so the copies cannot silently
+        # reorder relative to the canonical schema.
+        positions: list[int] = []
+        for label in finalize.TESTS_FIELDS:
+            m = re.search(rf"^[ \t]*-[ \t]*{re.escape(label)}:", block, re.MULTILINE)
+            assert m, f"{source}: Tests block missing a '- {label}:' bullet"
+            positions.append(m.start())
+        assert positions == sorted(positions), (
+            f"{source}: Tests field bullets out of TESTS_FIELDS order"
+        )
+
+
 if __name__ == "__main__":
     import sys
     import traceback

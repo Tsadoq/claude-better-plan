@@ -39,6 +39,8 @@ Draft a `## Tasks` block that an implementation turn could execute. Apply your a
 
 ## Output format
 
+Before drafting any `**Tests (TDD)**` block, read and apply `## Plan-time authoring rules` of `${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/references/test-principles.md`; each rule maps onto one field below.
+
 Return a single message with this structure:
 
 ```
@@ -56,6 +58,12 @@ Return a single message with this structure:
 **Tests (TDD)**:   <!-- include this block ONLY for tasks that create or modify code; omit it entirely for markdown, docs, or config tasks -->
 - File: {path/to/test_x.py} (new|modify)
 - Test name: `{test_function_name}`
+- Behavior: {the one sentence naming the single behavior this test protects}
+- Level: {unit | component | system -- the lowest level that can observe the behavior}
+- Real vs mocked: {what runs real; nothing the plan's code owns gets patched}
+- Setup: {local to the test, or the named shared fixture and why}
+- Seams: {none, or justify -- no production seam introduced only for the test}
+- Dedup: {what a lower level already covers that this test must not re-assert}
 - Asserts: {1 to 2 sentences naming the exact assertion: input shape, expected output, expected status code or exception.}
 - This test MUST fail before implementation begins.
 

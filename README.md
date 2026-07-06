@@ -19,7 +19,7 @@ flowchart LR
     AR --> EX["/deep-plan:deep-plan-execute"]
 ```
 
-`/deep-plan:deep-plan-execute` then turns the plan's tasks into real harness tasks with dependencies (`TaskCreate` + `addBlockedBy`) and implements them one at a time in dependency order: failing test first, implement, verify, record an implementation note. It refuses to start while the plan has open questions.
+`/deep-plan:deep-plan-execute` then turns the plan's tasks into real harness tasks with dependencies (`TaskCreate` + `addBlockedBy`) and implements them one at a time in dependency order: failing test first, implement, verify, a dual post-task review of the task's diff (the design fleet and the test fleet side by side), a post-green stability re-run of the task's tests to catch flakes before completion, record an implementation note. It refuses to start while the plan has open questions.
 
 ## Quick start
 
@@ -79,7 +79,7 @@ To make plan writes prompt-free in default permission mode, allowlist the plan p
 
 ## Design review
 
-A parallel critic fleet (one small-model `dp-design-critic` per red-flag cluster, then an adversarial verify pass on each finding) reviews design quality at plan time, critique time, and after each executed task's tests go green; `/design-review [path | git ref | plan-file]` runs the same fleet standalone. The guidelines live in `skills/design-review/references/design-principles.md`, independently paraphrased from a named source with no affiliation (see that file's `## Attribution and scope`). The fleet prefers the harness Workflow tool and falls back to a plain agent fan-out where Workflow is unavailable.
+A parallel critic fleet (one small-model `dp-design-critic` per red-flag cluster, then an adversarial verify pass on each finding) reviews design quality at plan time, critique time, and after each executed task's tests go green; `/design-review [path | git ref | plan-file]` runs the same fleet standalone. A sibling test-critic fleet (`dp-test-critic`) runs through the same parametrized recipe against the plan's `**Tests (TDD)**` blocks at critique time and against each task's diff at execute time. The design guidelines live in `skills/design-review/references/design-principles.md`, independently paraphrased from a named source with no affiliation (see that file's `## Attribution and scope`); the test guidelines live in `skills/deep-plan/references/test-principles.md`. The fleet prefers the harness Workflow tool and falls back to a plain agent fan-out where Workflow is unavailable.
 
 ## Development
 

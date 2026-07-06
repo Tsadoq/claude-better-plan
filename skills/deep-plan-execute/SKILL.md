@@ -101,9 +101,15 @@ capture a baseline ref for the design review in step 4 (`git stash create`;
 empty output means the tree is clean, use `HEAD`), then:
 
 1. **If the task has a `tests` block (code task):** write the test described in
-   `tests` FIRST. Run the `verification` command and confirm it FAILS (red). If
-   it passes before you have written any implementation, the test is wrong or
-   the behaviour already exists -- stop and tell the user.
+   `tests` FIRST. Quote `## Execute-time run rules` of
+   `${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/references/test-principles.md` and
+   `## Execute-time craft rules` of
+   `${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/design-principles.md`
+   into the implementation turn alongside the task description; they govern how
+   the test and the code are written. Run the `verification` command and
+   confirm it FAILS (red). If it passes before you have written any
+   implementation, the test is wrong or the behaviour already exists -- stop
+   and tell the user.
 2. **Implement** the `change` against the `target_files`. Touch only what the
    task names; other tasks own the rest.
 3. **Run the `verification` command.** For a code task it must now pass (green).
@@ -116,10 +122,17 @@ empty output means the tree is clean, use `HEAD`), then:
    (`git diff <baseline> -- <target files>`), and pass the diff as text
    because the critics have no Bash. Run the design fleet on it per
    `${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/fleet-orchestration.md`
-   (one `dp-design-critic` per red-flag cluster, then the verify stage).
+   (one `dp-design-critic` per red-flag cluster, then the verify stage), and
+   run the same recipe with `agentType: deep-plan:dp-test-critic` on the same
+   task-scoped diff (one finder per `## Review-time red flags` cluster of
+   `${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/references/test-principles.md`).
    Fix `material` findings within the task and re-run the `verification`
    command before completing; log `minor` findings in the task completion
-   note without blocking.
+   note without blocking. After first green and after any review fixes,
+   re-run the task's `verification` command once more; treat a second-run
+   failure as a stability finding that blocks completion until the flake is
+   understood and fixed. This is the loop's enforcement of the `Re-run
+   after green` run rule in test-principles.md.
 5. **Record the implementation note (MANDATORY for folder plans).** After
    verification passes and before the task is marked completed: append one
    terse `### Task {N}: {name}` entry (2 to 4 lines: deviations from the plan,
@@ -161,4 +174,5 @@ the README index.
 - Re-opening a decision already settled in `## Decisions made` without asking.
 - Batching unrelated tasks into one `TaskCreate`.
 - Marking a task completed with unresolved material design findings.
+- Marking a task completed without the post-green stability re-run.
 - Marking a task completed without its design.md implementation note (folder plans).

@@ -1,6 +1,6 @@
 # dp-plan-perspective catalogue
 
-The perspective fan-out in Phase 4 picks 1 to 3 priority perspectives from the catalogue below based on the user's evident priorities, and always launches `deep-modules` in addition (total fan-out 2 to 4). Each perspective drafts a `## Tasks` block that the orchestrator merges.
+The perspective fan-out in Phase 4 picks 1 to 3 priority perspectives from the catalogue below based on the user's evident priorities, and always launches `deep-modules` in addition (total fan-out 2 to 4). Each perspective drafts a `## Tasks` block that the orchestrator merges. Every perspective's `**Tests (TDD)**` blocks follow `## Plan-time authoring rules` of `${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/references/test-principles.md`, whatever the perspective's frame.
 
 ## Perspectives
 
