@@ -80,6 +80,17 @@ ALWAYS_TASK_SUBSECTIONS = [
     ("**Depends on**", "none"),
 ]
 
+# Canonical `**Tests (TDD)**` field labels, in normative order. Single source
+# of the schema: the template skeleton, the golden fixture, and the
+# perspective agent are pinned to this tuple by the contract tests. A code
+# task whose Tests block lacks a `- {field}:` bullet gets one warning per
+# missing field; repair never inserts field lines (warn only, like the
+# missing-block check below).
+TESTS_FIELDS = (
+    "File", "Test name", "Behavior", "Level", "Real vs mocked",
+    "Setup", "Seams", "Dedup", "Asserts",
+)
+
 CODE_EXTS = {
     ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".rb",
     ".c", ".h", ".hpp", ".cc", ".cpp", ".cs", ".kt", ".swift", ".php",
@@ -252,8 +263,14 @@ def ensure_task_subsections(text: str, fixes: list[str], warnings: list[str]) ->
                 additions.append(f"{label}: {default}")
                 fixes.append(f"task {n}: inserted {label} with {default}")
                 warnings.append(f"task {n}: {label} was missing, set to {default}")
-        if "**Tests (TDD)**" not in block and _is_code_task(block):
-            warnings.append(f"task {n} touches code but has no **Tests (TDD)** subsection")
+        if _is_code_task(block):
+            if "**Tests (TDD)**" not in block:
+                warnings.append(f"task {n} touches code but has no **Tests (TDD)** subsection")
+            else:
+                tests_body = _task_subsections(block).get("Tests (TDD)", "")
+                for field in TESTS_FIELDS:
+                    if not re.search(rf"^[ \t]*-[ \t]*{re.escape(field)}:", tests_body, re.MULTILINE):
+                        warnings.append(f"task {n}: **Tests (TDD)** block missing field {field}")
         if additions:
             block = block.rstrip() + "\n\n" + "\n\n".join(additions) + "\n\n"
         rebuilt.append(header + "\n" if not header.endswith("\n") else header)

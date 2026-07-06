@@ -162,6 +162,119 @@ def test_doc_task_needs_no_tests_code_task_warns() -> None:
     assert not any("task 1" in w and "Tests" in w for w in warns), "doc task 1 must not warn about tests"
 
 
+TESTS_FIELDS_PLAN = """# P
+
+## Context
+
+ctx
+
+## Decisions made
+
+d
+
+## Architecture
+
+n/a
+
+## Tasks
+
+### Task 1: Edit code with a legacy Tests block
+
+**Target files**:
+- src/a.py (modify)
+
+**Change**:
+Edit code.
+
+**Tests (TDD)**:
+- File: tests/test_a.py (new)
+- Test name: `test_a`
+- Asserts: calling a() returns 1.
+- This test MUST fail before implementation begins.
+
+**Verification**:
+```
+pytest tests/test_a.py -x
+```
+
+**Depends on**: none
+
+### Task 2: Edit code with a full Tests block
+
+**Target files**:
+- src/b.py (modify)
+
+**Change**:
+Edit more code.
+
+**Tests (TDD)**:
+- File: tests/test_b.py (new)
+- Test name: `test_b`
+- Behavior: b() clamps negative inputs to zero.
+- Level: unit
+- Real vs mocked: b() runs real; nothing is patched.
+- Setup: local literals in the test.
+- Seams: none introduced.
+- Dedup: nothing lower covers this.
+- Asserts: b(-1) returns 0.
+- This test MUST fail before implementation begins.
+
+**Verification**:
+```
+pytest tests/test_b.py -x
+```
+
+**Depends on**: none
+
+### Task 3: Edit docs
+
+**Target files**:
+- docs/x.md (modify)
+
+**Change**:
+Edit docs.
+
+**Verification**:
+```
+grep x docs/x.md
+```
+
+**Depends on**: none
+
+## References
+
+- src/a.py
+
+## Open questions
+
+- none
+"""
+
+
+def test_incomplete_tests_block_warns_per_missing_field() -> None:
+    repaired, report = finalize.repair(TESTS_FIELDS_PLAN)
+    warns = report["warnings"]
+    # Task 1's legacy block carries File, Test name, and Asserts; every other
+    # canonical field must warn. Derived from TESTS_FIELDS so the schema stays
+    # single-sourced in finalize_plan.py.
+    missing_fields = tuple(f for f in finalize.TESTS_FIELDS if f not in ("File", "Test name", "Asserts"))
+    assert len(missing_fields) == 6, "legacy block should be missing the six new fields"
+    for field in missing_fields:
+        hits = [w for w in warns if "task 1" in w and field in w]
+        assert len(hits) == 1, f"expected exactly one task-1 warning for missing field {field!r}, got {hits}"
+    assert not any("task 2" in w for w in warns), f"full nine-field block must not warn, got {warns}"
+    assert not any("task 3" in w for w in warns), f"docs task must not get field warnings, got {warns}"
+
+    # Warn only, never insert: repair leaves the block untouched, so a second
+    # pass is byte-identical and still reports the same missing fields.
+    again, report2 = finalize.repair(repaired)
+    assert again == repaired, "field warnings must not mutate the plan text"
+    for field in missing_fields:
+        assert any("task 1" in w and field in w for w in report2["warnings"]), (
+            f"second pass lost the task-1 warning for {field!r}"
+        )
+
+
 def test_first_sentence_pep257_edge_cases() -> None:
     s = "Bumps the plugin to v0.5.0 and renames finalize_plan.py entry points. Second sentence."
     assert finalize.first_sentence(s) == (
