@@ -19,6 +19,7 @@ DEEP_PLAN_SKILL = ROOT / "skills" / "deep-plan" / "SKILL.md"
 EXECUTE_SKILL = ROOT / "skills" / "deep-plan-execute" / "SKILL.md"
 DESIGN_REVIEW_SKILL = ROOT / "skills" / "design-review" / "SKILL.md"
 CRITIC_AGENT = ROOT / "agents" / "dp-plan-critic.md"
+PHASE_PROMPTS = ROOT / "skills" / "deep-plan" / "references" / "phase-prompts.md"
 
 
 def _frontmatter(text: str) -> str:
@@ -83,18 +84,25 @@ def test_skill_forbids_plan_mode_tools() -> None:
 
 def test_skill_pins_folder_lifecycle() -> None:
     text = DEEP_PLAN_SKILL.read_text()
+    fragments = PHASE_PROMPTS.read_text()
 
-    # Folder lifecycle: draft born as a folder, stale detection globs folders.
-    assert "*-draft/" in text, "stale-draft detection must glob *-draft/ folders"
+    # Folder lifecycle: draft born as a folder. The stale-draft glob and the
+    # fail-closed rename were extracted into phase-prompts.md by the trim, so
+    # they are pinned there; SKILL.md keeps the canonical-path mentions.
+    assert "*-draft/" in fragments, (
+        "stale-draft detection must glob *-draft/ folders (Phase 0 fragment)"
+    )
     assert "<topic>-draft/plan.md" in text, "draft must be born as <topic>-draft/plan.md"
     assert "<topic>-draft.md" not in text, "flat draft naming must be gone"
     assert "<slug>/plan.md" in text, "canonical plan path must be <slug>/plan.md"
 
     # Fail-closed rename: both existence guards on the mv line itself.
     rename_lines = [
-        ln for ln in text.splitlines() if "mv " in ln and ln.count("test ! -e") == 2
+        ln for ln in fragments.splitlines() if "mv " in ln and ln.count("test ! -e") == 2
     ]
-    assert rename_lines, "rename must guard folder AND legacy flat form on the mv line"
+    assert rename_lines, (
+        "rename must guard folder AND legacy flat form on the mv line (Phase 4 fragment)"
+    )
 
     # The documented permission snippet covers the guard segments.
     assert "Bash(test ! -e docs/plans/*)" in text, (
@@ -107,6 +115,44 @@ def test_skill_pins_folder_lifecycle() -> None:
     # Archive outputs are folder members, never dotted siblings.
     assert ".probes.md" not in text, "dotted probes sibling must not be an archive output"
     assert ".research.md" not in text, "dotted research sibling must not be an archive output"
+
+
+def test_deep_plan_skill_fits_reattach_budget() -> None:
+    # The harness re-attaches skill bodies with a ~5,000-token front-anchored
+    # truncation window; a longer SKILL.md silently loses its tail phases.
+    # o200k_base is the closest public tokenizer to the harness's accounting;
+    # the budget was measured against it when the window was probed (plan D5).
+    import pytest
+
+    tiktoken = pytest.importorskip("tiktoken")
+    text = DEEP_PLAN_SKILL.read_text()
+    tokens = len(tiktoken.get_encoding("o200k_base").encode(text))
+    assert tokens < 5000, (
+        f"deep-plan SKILL.md measures {tokens} tokens; it must stay under the "
+        "5000-token re-attach ceiling or later phases get truncated on re-attach"
+    )
+
+
+def test_approval_memo_wiring() -> None:
+    skill = DEEP_PLAN_SKILL.read_text()
+    start = skill.find("## Phase 5")
+    assert start != -1, "deep-plan SKILL.md must keep the Phase 5 heading"
+    end = skill.find("\n## ", start + 1)
+    phase5 = skill[start:] if end == -1 else skill[start:end]
+    assert "last_plan_path" in phase5, (
+        "Phase 5 of deep-plan SKILL.md must record the last_plan_path memo on approval"
+    )
+
+    text = EXECUTE_SKILL.read_text()
+    assert "--lookup" in text, "execute Step 1 must consult setup_session.py --lookup"
+    assert "ls -td" in text, "execute Step 1 must keep the newest-mtime ls fallback"
+    assert text.index("--lookup") < text.index("ls -td"), (
+        "the memo lookup must precede the mtime fallback in execute Step 1"
+    )
+    for leaked in ("projects.json", "XDG_STATE_HOME"):
+        assert leaked not in text, (
+            f"execute skill must not carry state-schema knowledge: {leaked!r} leaked"
+        )
 
 
 def test_execute_skill_targets_the_parser_and_task_api() -> None:

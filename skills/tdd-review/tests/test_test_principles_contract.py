@@ -1,13 +1,14 @@
 """Contract test: the test-guidance content and its wiring.
 
-Pins the structure of skills/deep-plan/references/test-principles.md
+Pins the structure of skills/tdd-review/references/test-principles.md
 (the single source of truth for test guidance) so orchestrators that quote
-its sections by heading never silently break. Stdlib only, so CI does not
-need pyyaml.
+its sections by heading never silently break, and pins the tdd-review
+skill wrapper that owns the rubric. Stdlib only, so CI does not need
+pyyaml.
 
 Runnable two ways:
-    python3 skills/deep-plan/tests/test_test_principles_contract.py
-    python3 -m pytest skills/deep-plan/tests/test_test_principles_contract.py
+    python3 skills/tdd-review/tests/test_test_principles_contract.py
+    python3 -m pytest skills/tdd-review/tests/test_test_principles_contract.py
 """
 
 from __future__ import annotations
@@ -18,7 +19,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = ROOT / "skills" / "deep-plan" / "scripts"
-TEST_PRINCIPLES = ROOT / "skills" / "deep-plan" / "references" / "test-principles.md"
+TEST_PRINCIPLES = ROOT / "skills" / "tdd-review" / "references" / "test-principles.md"
+TDD_REVIEW_SKILL = ROOT / "skills" / "tdd-review" / "SKILL.md"
 PERSPECTIVE_AGENT = ROOT / "agents" / "dp-plan-perspective.md"
 PERSPECTIVES = ROOT / "skills" / "deep-plan" / "references" / "perspectives.md"
 DEEP_PLAN_SKILL = ROOT / "skills" / "deep-plan" / "SKILL.md"
@@ -83,6 +85,48 @@ def test_test_principles_structure() -> None:
     )
 
 
+def test_tdd_review_skill_contract() -> None:
+    assert TDD_REVIEW_SKILL.exists(), f"missing skill wrapper: {TDD_REVIEW_SKILL}"
+    text = TDD_REVIEW_SKILL.read_text()
+    # Search from offset 3 to skip the opening "---" delimiter and find the
+    # closing one, so `frontmatter` is everything between the two fences.
+    end = text.index("\n---", 3)
+    frontmatter, body = text[:end], text[end:]
+
+    # Line-anchored key checks: a top-level YAML key starts at column 0, so a
+    # commented-out or nested look-alike cannot satisfy them.
+    lines = frontmatter.splitlines()
+    assert any(line == "name: tdd-review" for line in lines), (
+        "frontmatter missing top-level 'name: tdd-review' key"
+    )
+    assert any(line.startswith("description:") for line in lines), (
+        "frontmatter missing top-level 'description' key"
+    )
+    assert "disable-model-invocation" not in frontmatter, (
+        "tdd-review must stay model-invocable: drop the disable-model-invocation key"
+    )
+
+    desc_start = next(i for i, line in enumerate(lines) if line.startswith("description:"))
+    desc_lines = [lines[desc_start]]
+    for line in lines[desc_start + 1 :]:
+        if not line.startswith((" ", "\t")):
+            break
+        desc_lines.append(line)
+    description = "\n".join(desc_lines)
+    # 1024 chars is Claude Code's budget for skill descriptions surfaced to
+    # the model-invocation router; longer descriptions get truncated there.
+    assert len(description) < 1024, (
+        f"description is {len(description)} chars; model-invocable descriptions must stay under 1024"
+    )
+
+    for pointer in (
+        "references/test-principles.md",
+        "fleet-orchestration.md",
+        "deep-plan:dp-test-critic",
+    ):
+        assert pointer in body, f"tdd-review SKILL.md body missing pointer {pointer!r}"
+
+
 def test_perspective_agent_drafts_full_tests_schema() -> None:
     agent_text = PERSPECTIVE_AGENT.read_text()
     # Labels come from finalize_plan.TESTS_FIELDS (never re-typed here) so the
@@ -92,8 +136,8 @@ def test_perspective_agent_drafts_full_tests_schema() -> None:
             f"dp-plan-perspective.md output format missing a '- {label}:' bullet"
         )
     for path in (PERSPECTIVE_AGENT, PERSPECTIVES):
-        assert "test-principles.md" in path.read_text(), (
-            f"{path.name} must point Tests-block authoring at test-principles.md"
+        assert "tdd-review/references/test-principles.md" in path.read_text(), (
+            f"{path.name} must point Tests-block authoring at the tdd-review rubric path"
         )
 
 
@@ -103,7 +147,7 @@ def test_phase46_launches_test_critic_fleet() -> None:
     end = skill.find("## Phase 5")
     assert start != -1 and end != -1, "deep-plan SKILL.md must keep Phase 4.6 and Phase 5 headings"
     region = skill[start:end]
-    for needle in ("dp-test-critic", "test-principles.md"):
+    for needle in ("dp-test-critic", "tdd-review/references/test-principles.md"):
         assert needle in region, f"Phase 4.6 of deep-plan SKILL.md must reference {needle!r}"
 
     assert "dp-test-critic" in PHASE_PROMPTS.read_text(), (
@@ -117,7 +161,7 @@ def test_phase46_launches_test_critic_fleet() -> None:
 def test_execute_loop_quotes_run_rules_and_rechecks_stability() -> None:
     text = EXECUTE_SKILL.read_text()
     for needle in (
-        "test-principles.md",
+        "tdd-review/references/test-principles.md",
         "dp-test-critic",
         "Execute-time run rules",
         "Execute-time craft rules",

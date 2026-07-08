@@ -1,11 +1,16 @@
 ---
 name: deep-plan-execute
 description: |
-  Executes a finalized /deep-plan plan file. Parses the plan's ## Tasks into
-  harness tasks (one TaskCreate each), wires Depends on into addBlockedBy, then
-  drives a test-first implementation loop task by task in dependency order.
-  Invoke after a /deep-plan plan is approved and you are ready to build it, e.g.
-  "implement the plan" or "/deep-plan:deep-plan-execute <plan-file>".
+  Executes a plan produced by /deep-plan: the plan-folder artifact whose
+  plan.md carries a ## Decisions made table and per-task **Tests (TDD)**
+  blocks, located when no path is given through the approved-plan memo
+  recorded at approval. Parses
+  the plan's ## Tasks into harness tasks (one TaskCreate each), wires
+  Depends on into addBlockedBy, then drives a test-first implementation
+  loop task by task in dependency order. Invoke after a /deep-plan plan is
+  approved and you are ready to build it, e.g. "implement the plan" or
+  "/deep-plan:deep-plan-execute <plan-file>". Not for executing plans
+  produced outside /deep-plan.
 argument-hint: "[plan-path (plan.md file or plan folder)]"
 ---
 
@@ -25,19 +30,27 @@ TodoWrite-style checklist and tell the user dependency wiring is degraded.
 
 1. If `$ARGUMENTS` names a path, use it as the plan file. A plan folder is
    accepted as-is: `load_tasks.py` resolves a folder to its `plan.md` member.
-2. Otherwise, find the project's `plans_dir` and use the most recently modified
-   plan there, across both shapes (folder plans as `<slug>/plan.md`, legacy
-   flat plans as `<slug>.md`):
+2. Otherwise, run the documented lookup:
 
    ```
-   ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-   PROJECTS="${XDG_STATE_HOME:-$HOME/.local/state}/deep-plan/projects.json"
-   PLANS_DIR="$(python3 -c "import json,sys; d=json.load(open('$PROJECTS')); print(d.get('$ROOT',{}).get('plans_dir',''))" 2>/dev/null)"
-   # newest mtime wins across both shapes; the path-anchored exclusion keeps the
-   # generated README, legacy dotted siblings, and unfinished *-draft/ folders
-   # from ever matching
-   ls -td "$PLANS_DIR"/*/plan.md "$PLANS_DIR"/*.md 2>/dev/null | grep -vE '(/(README|[^/]*\.(probes|research))\.md$|-draft/plan\.md$)' | head -1
+   python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py --lookup
    ```
+
+   It prints `{ok, project_root, plans_dir, last_plan_path}`. Resolution order:
+
+   - When `last_plan_path` is non-null, use it directly: it is the memo
+     recorded at Phase 5 approval, and the script has already verified the
+     file exists and still carries a `**Status**: approved` line.
+   - Otherwise fall back to the most recently modified plan in the returned
+     `plans_dir` (as `PLANS_DIR`), across both shapes (folder plans as
+     `<slug>/plan.md`, legacy flat plans as `<slug>.md`):
+
+     ```
+     # newest mtime wins across both shapes; the path-anchored exclusion keeps the
+     # generated README, legacy dotted siblings, and unfinished *-draft/ folders
+     # from ever matching
+     ls -td "$PLANS_DIR"/*/plan.md "$PLANS_DIR"/*.md 2>/dev/null | grep -vE '(/(README|[^/]*\.(probes|research))\.md$|-draft/plan\.md$)' | head -1
+     ```
 
    If no plan file can be resolved, ask the user via `AskUserQuestion` for the
    path. Do not guess.
@@ -102,7 +115,7 @@ empty output means the tree is clean, use `HEAD`), then:
 
 1. **If the task has a `tests` block (code task):** write the test described in
    `tests` FIRST. Quote `## Execute-time run rules` of
-   `${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/references/test-principles.md` and
+   `${CLAUDE_PLUGIN_ROOT}/skills/tdd-review/references/test-principles.md` and
    `## Execute-time craft rules` of
    `${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/design-principles.md`
    into the implementation turn alongside the task description; they govern how
@@ -125,7 +138,7 @@ empty output means the tree is clean, use `HEAD`), then:
    (one `dp-design-critic` per red-flag cluster, then the verify stage), and
    run the same recipe with `agentType: deep-plan:dp-test-critic` on the same
    task-scoped diff (one finder per `## Review-time red flags` cluster of
-   `${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/references/test-principles.md`).
+   `${CLAUDE_PLUGIN_ROOT}/skills/tdd-review/references/test-principles.md`).
    Fix `material` findings within the task and re-run the `verification`
    command before completing; log `minor` findings in the task completion
    note without blocking. After first green and after any review fixes,

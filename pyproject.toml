@@ -14,6 +14,15 @@ target-version = "py312"
 # gate flags real problems rather than churn.
 select = ["E", "F", "I", "B", "UP"]
 
+[tool.pytest.ini_options]
+# Discovery is owned here: callers (CI, `uvx pytest`) run bare pytest and
+# never list per-skill test paths. One entry per skill that ships a
+# co-located tests/ dir.
+testpaths = ["skills/deep-plan/tests", "skills/design-review/tests", "skills/tdd-review/tests"]
+# importlib mode isolates the sibling test dirs from each other, so same-named
+# test modules or conftests across skills cannot collide on import.
+addopts = "--import-mode=importlib"
+
 [tool.mypy]
 # Strict typing is enforced only on the helper scripts and hooks (stdlib-only,
 # fully annotated). The test suite uses dynamic importlib loading that strict

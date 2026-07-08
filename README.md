@@ -19,7 +19,7 @@ flowchart LR
     AR --> EX["/deep-plan:deep-plan-execute"]
 ```
 
-`/deep-plan:deep-plan-execute` then turns the plan's tasks into real harness tasks with dependencies (`TaskCreate` + `addBlockedBy`) and implements them one at a time in dependency order: failing test first, implement, verify, a dual post-task review of the task's diff (the design fleet and the test fleet side by side), a post-green stability re-run of the task's tests to catch flakes before completion, record an implementation note. It refuses to start while the plan has open questions.
+`/deep-plan:deep-plan-execute` then turns the plan's tasks into real harness tasks with dependencies (`TaskCreate` + `addBlockedBy`) and implements them one at a time in dependency order: failing test first, implement, verify, a dual post-task review of the task's diff (the design fleet and the test fleet side by side), a post-green stability re-run of the task's tests to catch flakes before completion, record an implementation note. Approval records a durable memo of the approved plan, which execute consults first (even after `/clear`) before falling back to the newest plan in the project's plans dir. It refuses to start while the plan has open questions.
 
 ## Quick start
 
@@ -41,7 +41,7 @@ Then, in any project:
 After approval (and the recommended `/compact`), implement it:
 
 ```
-/deep-plan:deep-plan-execute                      # newest plan in the project plans_dir
+/deep-plan:deep-plan-execute                      # the plan you last approved, else the newest one
 /deep-plan:deep-plan-execute docs/plans/my-plan   # or name a plan folder / plan.md
 ```
 
@@ -79,20 +79,20 @@ To make plan writes prompt-free in default permission mode, allowlist the plan p
 
 ## Design review
 
-A parallel critic fleet (one small-model `dp-design-critic` per red-flag cluster, then an adversarial verify pass on each finding) reviews design quality at plan time, critique time, and after each executed task's tests go green; `/design-review [path | git ref | plan-file]` runs the same fleet standalone. A sibling test-critic fleet (`dp-test-critic`) runs through the same parametrized recipe against the plan's `**Tests (TDD)**` blocks at critique time and against each task's diff at execute time. The design guidelines live in `skills/design-review/references/design-principles.md`, independently paraphrased from a named source with no affiliation (see that file's `## Attribution and scope`); the test guidelines live in `skills/deep-plan/references/test-principles.md`. The fleet prefers the harness Workflow tool and falls back to a plain agent fan-out where Workflow is unavailable.
+A parallel critic fleet (one small-model `dp-design-critic` per red-flag cluster, then an adversarial verify pass on each finding) reviews design quality at plan time, critique time, and after each executed task's tests go green; `/design-review [path | git ref | plan-file]` runs the same fleet standalone. A sibling test-critic fleet (`dp-test-critic`) runs through the same parametrized recipe against the plan's `**Tests (TDD)**` blocks at critique time and against each task's diff at execute time; `/tdd-review [plan-file]` runs it standalone against a deep-plan plan's Tests (TDD) blocks. The design guidelines live in `skills/design-review/references/design-principles.md`, independently paraphrased from a named source with no affiliation (see that file's `## Attribution and scope`); the test guidelines live in `skills/tdd-review/references/test-principles.md`. The fleet prefers the harness Workflow tool and falls back to a plain agent fan-out where Workflow is unavailable.
 
 ## Development
 
-This repo is a single-plugin marketplace: the repo root is the plugin root. Orchestration lives in `skills/*/SKILL.md` with prompt fragments and templates under `references/`; the stdlib-only helper scripts and their tests live in `skills/deep-plan/scripts/` and `skills/deep-plan/tests/`; subagent definitions in `agents/`.
+This repo is a single-plugin marketplace: the repo root is the plugin root. Orchestration lives in `skills/*/SKILL.md` with prompt fragments and templates under `references/`; the stdlib-only helper scripts live in `skills/deep-plan/scripts/`; contract tests are co-located per skill under `skills/<skill>/tests/` (discovery is owned by `pyproject.toml`); subagent definitions in `agents/`.
 
 ```
 /plugin marketplace add /absolute/path/to/claude-better-plan   # local checkout
-uvx ruff check skills/deep-plan                                # the CI gate, locally
+uvx ruff check skills                                          # the CI gate, locally
 uvx mypy --strict skills/deep-plan/scripts skills/deep-plan/hooks
-uvx pytest skills/deep-plan/tests -q
+uvx pytest -q
 ```
 
-`SKILL.md` and `references/` edits hot-reload within a session; changes under `agents/` need `/reload-plugins` or a restart. Contract tests pin the load-bearing strings of the skills, templates, and design principles: when you change one, change its test in the same commit. Releases flow through the Conventional Commits auto-bump CI (a `feat:`/`fix:` commit on main bumps `plugin.json`); never edit the version by hand.
+CI pins `pytest>=9,<10` (the major the suite is verified under) and installs `tiktoken` for the token-budget contract test. `SKILL.md` and `references/` edits hot-reload within a session; changes under `agents/` need `/reload-plugins` or a restart. Contract tests pin the load-bearing strings of the skills, templates, and design principles: when you change one, change its test in the same commit. Releases flow through the Conventional Commits auto-bump CI (a `feat:`/`fix:` commit on main bumps `plugin.json`); layout-moving changes (a renamed skill, a moved reference) must land as `feat:`- or `fix:`-typed commits, because that version bump is what re-keys the installed plugin cache onto the new layout. Never edit the version by hand.
 
 ## See also
 

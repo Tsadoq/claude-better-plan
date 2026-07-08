@@ -21,15 +21,18 @@ jobs:
           python-version: "3.12"
 
       # ruff and mypy are dev-only tools, not plugin runtime deps; pytest is the
-      # test runner. The plugin scripts themselves are stdlib-only.
+      # test runner (pinned to the major the suite is verified under locally);
+      # tiktoken feeds the token-budget contract test. The plugin scripts
+      # themselves are stdlib-only.
       - name: Install lint/type/test tools
-        run: pip install ruff mypy pytest
+        run: pip install ruff mypy "pytest>=9,<10" tiktoken
 
       - name: Lint (ruff)
-        run: ruff check skills/deep-plan
+        run: ruff check skills
 
       - name: Type-check (mypy --strict)
         run: mypy --strict skills/deep-plan/scripts skills/deep-plan/hooks
 
+      # Discovery comes from pyproject.toml's testpaths; no per-skill paths here.
       - name: Test (pytest)
-        run: python -m pytest skills/deep-plan/tests -v
+        run: python -m pytest -v

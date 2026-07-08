@@ -6,7 +6,8 @@ description: |
   principles — assertions and failure output, doubles and seams, fixtures
   and setup, or level and duplication — and reports checkable findings;
   also relaunched in verify mode to refute a single finding. Read-only.
-  Used by deep-plan Phase 4.6 and the deep-plan-execute post-task review.
+  Used by /tdd-review, deep-plan Phase 4.6, and the deep-plan-execute
+  post-task review.
 model: haiku
 disallowedTools: Write, Edit, NotebookEdit, Bash, Agent, ExitPlanMode
 ---
