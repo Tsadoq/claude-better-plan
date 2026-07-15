@@ -61,7 +61,7 @@ These apply while writing code, before any review runs. The execute loop quotes 
 
 ## How to update these guidelines
 
-The five H2 headings above and the H3 cluster structure under "Review-time red flags" are pinned by `skills/deep-plan/tests/test_design_review_contract.py` (`test_design_principles_structure`); renaming a section breaks callers that quote it, so change the test and every caller in the same commit. The files that quote sections of this file are:
+The five H2 headings above and the H3 cluster structure under "Review-time red flags" are pinned by `skills/design-review/tests/test_design_review_contract.py` (`test_design_principles_structure`); renaming a section breaks callers that quote it, so change the test and every caller in the same commit. The files that quote sections of this file are:
 
 - `skills/design-review/SKILL.md` (standalone review: all four red-flag clusters)
 - `skills/design-review/references/fleet-orchestration.md` (fleet recipe: one finder per cluster)

@@ -86,22 +86,36 @@ tools during research.
 If a write outside the plan file or sandbox is tempting, do not look for a
 workaround: either move the work into the sandbox, or skip the verification.
 
+## R2: Approval enforcement
+
+Checkpoint 2's `AskUserQuestion` is the ONLY approval mechanism for the plan. Never ask "looks good?", "ready?", "should I proceed?", "any changes?" via plain text; a plain-text question is not a gate. And never call EnterPlanMode or ExitPlanMode: the harness nudges plan-shaped work toward native plan mode, but this skill deliberately stays out of it (its read-only guarantee is prompt-level only, and its injected workflow competes with this one). If plan mode is active at invocation, Phase 0 asks the user to toggle it off and stops the turn.
+
+## Anti-patterns
+
+- Silently picking between meaningful options because they all seem reasonable. Always surface via `AskUserQuestion`.
+- Generating options inside a subagent (latency hurts; subagents cannot delegate further).
+- Batching multiple decisions into one `AskUserQuestion` with multi-select. Decisions are conditional; batched questions encourage skimming.
+- Writing `## Decisions made` rows before the corresponding `AskUserQuestion` resolves.
+- Writing the plan file in Phase 1. The draft is born at Phase 2's first decision, not before.
+- Auto-running `/compact` or `/clear`. Both are user-triggered.
+- Everything R2 forbids: plain-text approval questions, EnterPlanMode, ExitPlanMode.
+
 ## High-level workflow
 
 ```mermaid
 flowchart TD
-    Start(["/deep-plan [optional slug hint]"]) --> P0
-    P0[Phase 0: Bootstrap] --> P1[Phase 1: Parallel Triangulation]
+    Start(["/deep-plan"]) --> P0[Phase 0: Bootstrap]
+    P0 --> P1[Phase 1: Parallel triangulation]
     P1 --> CP1{Checkpoint 1<br/>scope confirm}
     CP1 -->|reframe| P1
-    CP1 -->|confirm| P2[Phase 2: Decision Surfacing<br/>draft born, decisions appended live]
-    P2 --> P3[Phase 3: Targeted Deep Research]
-    P3 --> P4[Phase 4: Synthesis & Verification<br/>draft renamed to slug]
-    P4 --> P45[Phase 4.6: Adversarial critique<br/>dp-plan-critic refutes the plan<br/>+ dp-design-critic fleet reviews its design]
+    CP1 -->|confirm| P2[Phase 2: Decision surfacing]
+    P2 --> P3[Phase 3: Targeted deep research]
+    P3 --> P4[Phase 4: Synthesis & verification]
+    P4 --> P45[Phase 4.6: Adversarial critique]
     P45 -->|material gaps| P4
     P45 -->|reverses a decision| P2
     P45 -->|clean| REP["finalize_plan.py --repair"]
-    REP --> CP2{Checkpoint 2<br/>walk plan, THE approval gate}
+    REP --> CP2{Checkpoint 2<br/>THE approval gate}
     CP2 -->|refine| P4
     CP2 -->|change decision| P2
     CP2 -->|approve| P5[Phase 5: Archive + handoff]
@@ -139,34 +153,13 @@ Then proceed:
 
    The script returns a JSON blob describing project root, plans_dir, sandbox path, and optional sentinels (`prompt_for_plans_dir`, `no_git`, `plans_dir_under_protected_path`).
 
-3. **First-time-per-project plans_dir prompt** (only if sentinel `prompt_for_plans_dir`). Use `AskUserQuestion`:
+3. **plans_dir prompt** (sentinel `prompt_for_plans_dir`): ask via `AskUserQuestion`; options and persistence command in the Phase 0 fragment of phase-prompts.md.
 
-   - Question: "Where should plans for this project live? Default never goes to `~/.claude/plans/`."
-   - Header: "Plans dir"
-   - Options:
-     1. `<repo>/docs/plans/` (Recommended)
-     2. `<repo>/plans/`
-     3. `<repo-parent>/<repo-name>-plans/`
-     4. `<repo>/.claude/plans/` -- warn: protected path, every write prompts and cannot be allowlisted
+4. **Protected plans_dir warning** (sentinel `plans_dir_under_protected_path`): offer the move, never migrate silently; details in the Phase 0 fragment.
 
-   Persist the choice via `setup_session.py --update plans_dir=<ABS_PATH>`.
+5. **No-git fallback** (sentinel `no_git`): ask whether to use `cwd` as project root; details in the Phase 0 fragment.
 
-4. **Protected plans_dir warning** (only if sentinel `plans_dir_under_protected_path`). The remembered plans_dir resolves under `.claude/`, a protected path where every write prompts and allowlisting is impossible. Offer the move via `AskUserQuestion` (move to `<repo>/docs/plans/` recommended; keeping the current dir stays allowed). Never migrate silently. On move, persist via `setup_session.py --update plans_dir=<ABS_PATH>`.
-
-5. **No-git fallback** (only if sentinel `no_git`). Use `AskUserQuestion` to ask whether to use `cwd` as project root, abort, or point to an existing project. Default: cwd. Plans dir under cwd. Never `~/.claude/plans/`.
-
-6. **R3: Re-entry, stale drafts, and slug collision.** Before Phase 2 creates a new draft, glob `plans_dir/*-draft/` alongside the legacy flat form `plans_dir/*-draft.md`. If a stale draft exists (left by an abandoned run):
-
-   - Read its `## Context` paragraph and `## Decisions made` table (for a draft folder, from its `plan.md` member).
-   - Ask via `AskUserQuestion` `[resume from draft, overwrite, keep it and start fresh under another topic name]`. Default: resume. "Resume" seeds Phase 2 with the draft's already-resolved decisions; "overwrite" deletes the stale draft.
-   - Because this runs in Phase 0, no orphan draft can reach Phase 4.
-
-   When `resolve_slug.py` reports in Phase 4.1 that the slug already exists (as the folder `plans_dir/<slug>/` or the legacy flat file `plans_dir/<slug>.md`):
-
-   - Read its `## Context` paragraph and `## Decisions made` table.
-   - If similar to current intent: ask via `AskUserQuestion` `[refine existing, overwrite, new with -v2 suffix, custom suffix]`. Default: refine. "Refine" means seed the current plan from the existing file, then edit it in place.
-   - If unrelated: same options. Default: `-v2 suffix` (auto-incremented to `-v3`, `-v4` if taken).
-   - Never assume an existing plan file is still valid.
+6. **R3: stale drafts and slug collision.** Before Phase 2 creates a draft, glob `plans_dir/*-draft/` and the legacy `plans_dir/*-draft.md`; on a stale draft, and when `resolve_slug.py` reports a Phase 4.1 collision, follow the R3 flows in the Phase 0 fragment. Never assume an existing plan file is still valid.
 
 7. **Status line.** Print one short sentence to the user describing what was bootstrapped, then proceed to Phase 1. Do not narrate Phase 0 mechanics.
 
@@ -254,38 +247,11 @@ Sub-steps in order:
 
 ### 4.1 Slug generation
 
-Construct slug from `{user_intent_keywords, top_2_decision_choices}`. Format `[a-z0-9-]{1,60}`, lowercase, hyphen-separated, no leading/trailing or double hyphens. Examples:
-
-- "Add rate limiter" + Redis + token-bucket -> `rate-limiter-redis-token-bucket`
-- "Refactor auth to JWT with cookie rotation" -> `auth-refactor-jwt-cookie-rotation`
-
-Run:
-
-```
-python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/resolve_slug.py \
-  --slug <s> --plans-dir <d>
-```
-
-Returns either accepted slug or collision metadata. On collision, follow R3 (Phase 0 step 6).
+Construct the slug from `{user_intent_keywords, top_2_decision_choices}` (`[a-z0-9-]{1,60}`), then normalise and collision-check it with `resolve_slug.py`; command and examples in the Phase 4 fragment. On collision, follow R3 (Phase 0 step 6).
 
 ### 4.2 Rename the draft folder to its final name
 
-This is the single fail-closed rename point. Rename the Phase 2 draft folder in place, guarding BOTH the folder and the legacy flat form so a collision can never be clobbered (matching the `resolve_slug.py` collision predicate):
-
-```
-test ! -e <plans_dir>/<slug> && test ! -e <plans_dir>/<slug>.md && mv <plans_dir>/<topic>-draft <plans_dir>/<slug>
-```
-
-If the guarded command fails (either guard trips), do NOT fall through to a bare `mv`: follow the R3 collision flow (Phase 0 step 6) instead. Because the permission rules prefix-match the literal command string, issue the guarded command with project-relative paths (`docs/plans/...`) from the project root when plans_dir is inside the project; fall back to absolute paths otherwise (which may prompt once). See R1 for the one-time allowlist covering both the `mv` and `test ! -e` segments.
-
-Then record the new path:
-
-```
-python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
-  --update plan_path=<plans_dir>/<slug>/plan.md --session-id ${CLAUDE_SESSION_ID}
-```
-
-From here on, every plan write edits `plans_dir/<slug>/plan.md` in place. It is the single canonical plan file; there is no mirror.
+The single fail-closed rename point: a double-guarded rename moves the draft folder to its slug name, then `setup_session.py` records the new path (exact commands and permission notes in the Phase 4 fragment). If a guard trips, follow R3 -- never a bare `mv`. From here on every plan write edits `plans_dir/<slug>/plan.md` in place; it is the single canonical plan file.
 
 ### 4.3 Perspective fan-out
 
@@ -293,7 +259,7 @@ Launch 2 to 4 `dp-plan-perspective` agents (inherit) in parallel: always one car
 
 ### 4.4 Synthesis
 
-Merge perspectives into a single plan body using `references/plan-file-template.md` as the skeleton, editing `plans_dir/<slug>/plan.md` in place over the draft-seeded sections. Include the `**Tests (TDD)**` subsection only for tasks that produce or modify code, carrying the template's full field schema per code task and applying `## Plan-time authoring rules` of `references/test-principles.md`; omit the subsection entirely for tasks whose output is markdown, docs, or config. Append the Phase 3 research dossiers verbatim under a `## Research dossiers` appendix so they survive into the archived folder members.
+Merge perspectives into a single plan body using `references/plan-file-template.md` as the skeleton, editing `plans_dir/<slug>/plan.md` in place over the draft-seeded sections. Include the `**Tests (TDD)**` subsection only for tasks that produce or modify code, carrying the template's full field schema per code task and applying `## Plan-time authoring rules` of `${CLAUDE_PLUGIN_ROOT}/skills/tdd-review/references/test-principles.md`; omit the subsection entirely for tasks whose output is markdown, docs, or config. Append the Phase 3 research dossiers verbatim under a `## Research dossiers` appendix so they survive into the archived folder members.
 
 **Seed design.md**: in the same sub-step, write `<plans_dir>/<slug>/design.md` from `references/design-md-template.md`: one `D{N}` subsection per row of the plan's `## Decisions made` table, carrying the expanded rationale (why chosen, why each alternative was rejected) and evidence links per the template's fallback rules (link into the sibling `research.md` when Phase 3 ran; cite Phase 1 evidence inline or write `n/a` otherwise). Leave `## Implementation notes` empty; the execute skill appends to it per completed task.
 
@@ -304,52 +270,18 @@ Merge perspectives into a single plan body using `references/plan-file-template.
 
 ### 4.5 Verification probes
 
-Run inline `Bash` checks against design assumptions, sequentially for deterministic ordering. Examples:
-
-```
-python3 -c "import redis; print(redis.__version__)"
-grep -rl 'TokenBucket' src/
-uv run pytest --collect-only tests/middleware/
-```
-
-Capture each probe's output into the plan's `## Verification probes` appendix as:
-
-```
-[probe N]: <command>
-<stdout, truncated to ~20 lines>
-```
-
-Probes that need fixture files write under `${SANDBOX_DIR}`. After approval, `finalize_plan.py --archive` extracts the `## Verification probes` and `## Research dossiers` appendices into the folder members `probes.md` and `research.md` so the final `plan.md` stays lean.
+Run inline `Bash` probes against design assumptions (sequentially, fixtures under `${SANDBOX_DIR}`) and capture the outputs into the plan's `## Verification probes` appendix (format and examples in the Phase 4 fragment). `finalize_plan.py --archive` later extracts that appendix and `## Research dossiers` into the folder members `probes.md` and `research.md`.
 
 ## Phase 4.6: Adversarial critique
 
-Before asking for approval, try to break the plan. Launch `dp-plan-critic` (inherit) with the synthesized plan body, the `## Decisions made` table, the Phase 1 evidence, and the Phase 3 dossiers. The critic returns findings under `## Missing tasks`, `## Wrong or missing dependencies`, `## Code tasks lacking tests`, `## Decisions contradicted by research`, and `## Untested assumptions`, each tagged `material` or `minor`.
-
-In the same launch message, run the design fleet per `${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/fleet-orchestration.md`: one `dp-design-critic` (haiku) per red-flag cluster in `design-principles.md`, reviewing the synthesized plan body and its `## Architecture` section as a design artifact, then the adversarial verify stage from the same recipe (Workflow path when available, fallback otherwise). Also run the same recipe with `agentType: deep-plan:dp-test-critic`: one finder per H3 cluster of `## Review-time red flags` in `${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/references/test-principles.md`, reviewing every task's `**Tests (TDD)**` block. Design and test findings carry the same `material`/`minor` tags and merge into the handling below; they share the depth loop bounds already defined -- no separate knobs.
-
-**Count and loop bound scale by depth** (Depth scaling table): shallow runs one quick pass and does not loop; standard runs one pass and loops back at most once if material findings remain; exhaustive re-runs the critic until a pass returns no material findings, capped at 3 rounds.
-
-Act on the findings:
-
-- **Material finding that reverses a user decision**: do NOT fix it silently. Loop back to Phase 2 for that one decision, quoting the critic's contradiction in the new `AskUserQuestion` (same rule as a Phase 3 contradiction).
-- **Other material findings**: fix them inline in the plan body (add the missing task, correct the `**Depends on**`, add the missing `**Tests (TDD)**` block, add a verification probe), then re-run the critic if depth's loop bound allows.
-- **Minor findings**: append them to `## Open questions` rather than blocking. A non-empty `## Open questions` blocks `/deep-plan:deep-plan-execute` later, so keep them genuinely deferrable.
-
-Once the loop bound is reached or no material findings remain, proceed to Checkpoint 2.
+Before asking for approval, try to break the plan: launch `dp-plan-critic`, one `dp-design-critic` per design red-flag cluster, and one `dp-test-critic` per cluster of `skills/tdd-review/references/test-principles.md`, per the recipe in `skills/design-review/references/fleet-orchestration.md` (both under `${CLAUDE_PLUGIN_ROOT}`); full instructions, depth-scaled loop bounds, and finding handling live in the Phase 4.6 fragment. When no material findings remain (or the loop bound is reached), proceed to Checkpoint 2.
 
 ### Checkpoint 2 (walk the plan; THE approval gate)
 
 Finalize mechanically BEFORE asking, so finalization cannot be skipped:
 
 1. If the plan folder is somehow still at its `-draft/` name, complete the Phase 4.2 rename first.
-2. Run the repair pass:
-
-   ```
-   python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/finalize_plan.py \
-     --repair --plan <plans_dir>/<slug>/plan.md
-   ```
-
-   `finalize_plan.py` auto-repairs the plan (normalizes em-dashes and task headers, inserts any missing section or task subsection as `n/a`, strips attribution, regenerates the `## Task overview` table between its markers) and prints `{ok, fixes, warnings}`. It does NOT reject a normal plan: it repairs in one pass. Paraphrase any non-empty `fixes`/`warnings` to the user in two or three lines (for example, a code task missing its `**Tests (TDD)**` block). Only `ok: false` (empty plan, or no tasks at all) warrants looping back to Phase 4.
+2. Run the repair pass: `finalize_plan.py --repair --plan <plans_dir>/<slug>/plan.md`. It repairs in one pass and prints `{ok, fixes, warnings}`; paraphrase non-empty `fixes`/`warnings` in two or three lines. Only `ok: false` (empty plan, or no tasks at all) warrants looping back to Phase 4. Full semantics in the Phase 5 fragment.
 
 Then use `AskUserQuestion`:
 
@@ -375,7 +307,14 @@ On approval (Checkpoint 2 option 1):
      --archive --plan <plans_dir>/<slug>/plan.md --plans-dir <plans_dir> --slug <slug>
    ```
 
-   This rewrites the lean `plans_dir/<slug>/plan.md` in place, stamps `**Status**: approved` and `**Date**` under the title, writes the `research.md` and `probes.md` members when those appendices exist, and regenerates the plans index at `<plans_dir>/README.md`. Then emit EXACTLY this message and stop the turn:
+   This rewrites the lean `plans_dir/<slug>/plan.md` in place, stamps `**Status**: approved` and `**Date**` under the title, writes the `research.md` and `probes.md` members when those appendices exist, and regenerates the plans index at `<plans_dir>/README.md`. Immediately after a successful archive, record the approved-plan memo so `/deep-plan:deep-plan-execute` can find this plan even after `/clear`:
+
+   ```
+   python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
+     --update last_plan_path=<plans_dir>/<slug>/plan.md --session-id ${CLAUDE_SESSION_ID}
+   ```
+
+   Then emit EXACTLY this message and stop the turn:
 
    ```
    Plan approved and written to {plans_dir}/{slug}/plan.md (with research.md, probes.md, and design.md members when present; plans index refreshed at {plans_dir}/README.md).
@@ -386,21 +325,6 @@ On approval (Checkpoint 2 option 1):
    ```
 
    This is NOT automatic. `/compact` is summarising; `/clear` is destructive. Either is the user's choice. Naming the command explicitly is enough.
-
-## R2: Approval enforcement
-
-Checkpoint 2's `AskUserQuestion` is the ONLY approval mechanism for the plan. Never ask "looks good?", "ready?", "should I proceed?", "any changes?" via plain text; a plain-text question is not a gate. And never call EnterPlanMode or ExitPlanMode: the harness nudges plan-shaped work toward native plan mode, but this skill deliberately stays out of it (its read-only guarantee is prompt-level only, and its injected workflow competes with this one). If plan mode is active at invocation, Phase 0 asks the user to toggle it off and stops the turn.
-
-## Anti-patterns
-
-- Silently picking between meaningful options because they all seem reasonable. Always surface via `AskUserQuestion`.
-- Generating options inside a subagent (latency hurts; subagents cannot delegate further).
-- Batching multiple decisions into one `AskUserQuestion` with multi-select. Decisions are conditional; batched questions encourage skimming.
-- Writing `## Decisions made` rows before the corresponding `AskUserQuestion` resolves.
-- Writing the plan file in Phase 1. The draft is born at Phase 2's first decision, not before.
-- Asking "looks good?" via plain text instead of walking the plan through Checkpoint 2's `AskUserQuestion`.
-- Calling EnterPlanMode or ExitPlanMode anywhere in the flow (see R2).
-- Auto-running `/compact` or `/clear`. Both are user-triggered.
 
 ## Output budget
 

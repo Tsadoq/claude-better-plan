@@ -75,8 +75,9 @@ These apply while implementing a task, around the red-green cycle. The execute l
 
 ## How to update these guidelines
 
-The four H2 headings above and the four-cluster H3 structure under "Review-time red flags" are pinned by `skills/deep-plan/tests/test_test_principles_contract.py` (`test_test_principles_structure`); renaming a section breaks callers that quote it, so change the test and every caller in the same commit. The files that quote sections of this file are:
+The four H2 headings above and the four-cluster H3 structure under "Review-time red flags" are pinned by `skills/tdd-review/tests/test_test_principles_contract.py` (`test_test_principles_structure`); renaming a section breaks callers that quote it, so change the test and every caller in the same commit. The files that quote sections of this file are:
 
+- `skills/tdd-review/SKILL.md` (standalone review: all four red-flag clusters)
 - `skills/deep-plan/references/plan-file-template.md` (Tests block schema: plan-time authoring rules)
 - `agents/dp-plan-perspective.md` and `skills/deep-plan/references/perspectives.md` (perspective drafts: plan-time authoring rules)
 - `agents/dp-test-critic.md` (receives one red-flag cluster per instance, quoted by the caller)

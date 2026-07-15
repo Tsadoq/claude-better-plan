@@ -2,6 +2,16 @@
 
 Long-form per-phase prompts the orchestrator quotes into context as needed. The skill body in `SKILL.md` is the short orchestration; this file is the detail.
 
+## Contents
+
+- [Phase 0: Bootstrap](#phase-0-bootstrap)
+- [Phase 1: Parallel triangulation](#phase-1-parallel-triangulation)
+- [Phase 2: Decision surfacing](#phase-2-decision-surfacing)
+- [Phase 3: Targeted deep research](#phase-3-targeted-deep-research)
+- [Phase 4: Synthesis and verification](#phase-4-synthesis-and-verification)
+- [Phase 4.6: Adversarial critique](#phase-46-adversarial-critique)
+- [Phase 5: Archive and handoff](#phase-5-archive-and-handoff)
+
 ## Phase 0: Bootstrap
 
 ```
@@ -39,7 +49,7 @@ You are at the start of /deep-plan. Before doing anything else:
        python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
          --update plans_dir=<ABS_PATH> --session-id ${CLAUDE_SESSION_ID}
 
-4. Stale-draft detection (BEFORE Phase 2 may create a new draft): glob plans_dir/*-draft/
+4. Stale-draft detection (R3, BEFORE Phase 2 may create a new draft): glob plans_dir/*-draft/
    alongside the legacy flat form plans_dir/*-draft.md. If a draft exists (left by an
    abandoned run), read its ## Context and ## Decisions made (for a draft folder, from
    its plan.md member), then ask via AskUserQuestion [resume from draft, overwrite, start
@@ -47,7 +57,16 @@ You are at the start of /deep-plan. Before doing anything else:
    already-resolved decisions). Overwrite deletes the stale draft. No orphan draft may
    reach Phase 4.
 
-5. After state is bootstrapped, print a single short status sentence to the user and
+5. Slug collision (R3, reached from Phase 4.1 when resolve_slug.py reports the slug
+   already exists as the folder plans_dir/<slug>/ or the legacy flat file
+   plans_dir/<slug>.md): read the existing plan's ## Context and ## Decisions made,
+   then ask via AskUserQuestion [refine existing, overwrite, new with -v2 suffix,
+   custom suffix]. Default when similar to current intent: refine (seed the current
+   plan from the existing file, then edit in place). Default when unrelated: -v2
+   suffix (auto-incremented to -v3, -v4 if taken). Never assume an existing plan
+   file is still valid.
+
+6. After state is bootstrapped, print a single short status sentence to the user and
    proceed to Phase 1. Do not narrate Phase 0's mechanics.
 ```
 
@@ -179,7 +198,7 @@ Sub-steps in order:
    - Run resolve_slug.py to normalise and check for collision:
        python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/resolve_slug.py \
          --slug <s> --plans-dir <d>
-   - On collision, follow the section "Slug generation and collision handling" in PLAN.md.
+   - On collision, follow the R3 slug-collision flow (Phase 0 fragment, step 5).
 
 2. Rename the Phase 2 draft folder to its final name (Phase 4.2, the single fail-closed
    rename point; guard BOTH the folder and the legacy flat form, and on guard failure
@@ -204,9 +223,10 @@ Sub-steps in order:
    in place over the draft-seeded sections. Include the **Tests (TDD)** subsection
    only for tasks that produce or modify code, carrying the template's full field
    schema per code task and applying ## Plan-time authoring rules of
-   references/test-principles.md; omit it for markdown, docs, or
-   config tasks. Append the Phase 3 dossiers verbatim under a ## Research dossiers
-   appendix so they survive into the archived folder members.
+   ${CLAUDE_PLUGIN_ROOT}/skills/tdd-review/references/test-principles.md;
+   omit it for markdown, docs, or config tasks. Append the Phase 3 dossiers
+   verbatim under a ## Research dossiers appendix so they survive into the
+   archived folder members.
    In the same sub-step, seed <plans_dir>/<slug>/design.md from
    references/design-md-template.md: one D{N} subsection per decision row with the
    expanded rationale and evidence links (into the sibling research.md when Phase 3
@@ -247,9 +267,11 @@ dp-design-critic (haiku) per red-flag cluster in design-principles.md, reviewing
 synthesized plan body and its ## Architecture section as a design artifact, then the
 recipe's adversarial verify stage (Workflow path when available, fallback otherwise).
 Also run the same recipe with agentType deep-plan:dp-test-critic: one finder per H3
-cluster of ## Review-time red flags in test-principles.md, reviewing every task's
-**Tests (TDD)** block. Design and test findings carry the same material|minor tags,
-merge into the handling below, and share the depth loop bounds; no separate knobs.
+cluster of ## Review-time red flags in
+${CLAUDE_PLUGIN_ROOT}/skills/tdd-review/references/test-principles.md, reviewing
+every task's **Tests (TDD)** block. Design and test findings carry the same
+material|minor tags, merge into the handling below, and share the depth loop
+bounds; no separate knobs.
 
 Count and loop bound scale by depth (SKILL.md Depth scaling table):
 - shallow:    one quick pass, no loop.
@@ -300,9 +322,12 @@ Other branches loop back appropriately.
 
 2. On approval (Checkpoint 2 option 1, "Approve and finalize"): split the appendix
    sections into folder members in place (source and destination are the same file),
-   then emit EXACTLY the handoff message:
+   record the approved-plan memo, then emit EXACTLY the handoff message:
        python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/finalize_plan.py \
          --archive --plan <plans_dir>/<slug>/plan.md --plans-dir <plans_dir> --slug <slug>
+
+       python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
+         --update last_plan_path=<plans_dir>/<slug>/plan.md --session-id ${CLAUDE_SESSION_ID}
 
        Plan approved and written to {plans_dir}/{slug}/plan.md (with research.md,
        probes.md, and design.md members when present; plans index refreshed at
