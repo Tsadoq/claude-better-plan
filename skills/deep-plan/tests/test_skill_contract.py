@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[3]
 DEEP_PLAN_SKILL = ROOT / "skills" / "deep-plan" / "SKILL.md"
 EXECUTE_SKILL = ROOT / "skills" / "deep-plan-execute" / "SKILL.md"
 DESIGN_REVIEW_SKILL = ROOT / "skills" / "design-review" / "SKILL.md"
+PHASE_PROMPTS = ROOT / "skills" / "deep-plan" / "references" / "phase-prompts.md"
 CRITIC_AGENT = ROOT / "agents" / "dp-plan-critic.md"
 
 
@@ -101,12 +102,82 @@ def test_skill_pins_folder_lifecycle() -> None:
         "permission snippet must allowlist the test guard segments"
     )
 
-    # design.md seeding references the shared template.
+    # design.md seeding references the shared template; architecture.md is
+    # the conditional folder member.
     assert "design-md-template.md" in text, "Phase 4.4 must seed design.md from the template"
+    assert "architecture.md" in text, (
+        "SKILL.md must name the conditional architecture.md folder member"
+    )
 
     # Archive outputs are folder members, never dotted siblings.
     assert ".probes.md" not in text, "dotted probes sibling must not be an archive output"
     assert ".research.md" not in text, "dotted research sibling must not be an archive output"
+
+
+def _region(text: str, start_marker: str, end_marker: str, source: str) -> str:
+    start = text.find(start_marker)
+    end = text.find(end_marker, start + 1)
+    assert start != -1 and end != -1, (
+        f"{source}: region markers {start_marker!r}/{end_marker!r} missing"
+    )
+    return text[start:end]
+
+
+def test_phase46_launches_readability_critic() -> None:
+    skill = DEEP_PLAN_SKILL.read_text()
+    prompts = PHASE_PROMPTS.read_text()
+
+    # Phase 4.6 wires the readability fleet to its single source file in both
+    # orchestration files, so critic and templates cannot quote diverging rules.
+    region46 = _region(skill, "## Phase 4.6", "## Phase 5", "SKILL.md")
+    for needle in ("dp-readability-critic", "readability-principles.md"):
+        assert needle in region46, f"SKILL.md: Phase 4.6 must reference {needle!r}"
+    for needle in ("dp-readability-critic", "readability-principles.md"):
+        assert needle in prompts, f"phase-prompts.md: must mirror the {needle!r} wiring"
+
+    # architecture.md is a conditional member: named in the R1 writable list
+    # and in the Phase 5 handoff literal of both files.
+    r1 = _region(skill, "## R1", "## High-level workflow", "SKILL.md")
+    assert "architecture.md" in r1, "SKILL.md: R1 writable-member list must name architecture.md"
+    for source, text in (("SKILL.md", skill), ("phase-prompts.md", prompts)):
+        assert "architecture.md members when present" in text.replace("\n", " "), (
+            f"{source}: Phase 5 handoff literal must name architecture.md"
+        )
+
+    # Phase 4.4 names the architecture template (write-or-skip rubric lives
+    # there) and the research coverage preamble.
+    for source, region in (
+        ("SKILL.md", _region(skill, "### 4.4 Synthesis", "### 4.5", "SKILL.md")),
+        ("phase-prompts.md", _region(prompts, "4. Synthesis:", "5. Verification probes", "phase-prompts.md")),
+    ):
+        assert "architecture-md-template.md" in region, (
+            f"{source}: Phase 4.4 must cite architecture-md-template.md's significance test"
+        )
+        assert "Coverage" in region, (
+            f"{source}: Phase 4.4 must compose the research coverage preamble"
+        )
+
+    # Phase 4.5 points at the plan template's probe entry shape instead of
+    # restating the [probe N] format locally.
+    for source, region in (
+        ("SKILL.md", _region(skill, "### 4.5 Verification probes", "## Phase 4.6", "SKILL.md")),
+        ("phase-prompts.md", _region(prompts, "5. Verification probes", "## Phase 4.6", "phase-prompts.md")),
+    ):
+        assert "plan-file-template.md" in region, (
+            f"{source}: Phase 4.5 must point at the plan template's probe entry shape"
+        )
+        assert "[probe" not in region, (
+            f"{source}: Phase 4.5 must not restate the probe entry format locally"
+        )
+
+
+def test_execute_skill_reads_architecture_md() -> None:
+    text = EXECUTE_SKILL.read_text()
+    region = _region(text, "## Step 3", "## Step 4", "deep-plan-execute/SKILL.md")
+    assert "architecture.md" in region, (
+        "deep-plan-execute/SKILL.md must tell the implementation loop to read "
+        "architecture.md when the plan folder contains one"
+    )
 
 
 def test_execute_skill_targets_the_parser_and_task_api() -> None:

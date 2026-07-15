@@ -13,6 +13,7 @@ import tempfile
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
+LEGACY = Path(__file__).resolve().parent / "golden" / "legacy-plan.md"
 
 
 def _load(name: str):
@@ -68,6 +69,7 @@ def test_layout_constants_and_resolve_plan_path() -> None:
     assert finalize.RESEARCH_FILE_NAME == "research.md"
     assert finalize.PROBES_FILE_NAME == "probes.md"
     assert finalize.DESIGN_FILE_NAME == "design.md"
+    assert finalize.ARCHITECTURE_FILE_NAME == "architecture.md"
     assert finalize.DRAFT_SUFFIX == "-draft"
     assert finalize.OVERVIEW_BEGIN == "<!-- deep-plan-task-overview:begin generated: do not edit -->"
     assert finalize.OVERVIEW_END == "<!-- deep-plan-task-overview:end -->"
@@ -81,6 +83,18 @@ def test_layout_constants_and_resolve_plan_path() -> None:
         file_path = folder / "some-plan.md"
         file_path.write_text("# x\n")
         assert finalize.resolve_plan_path(file_path) == file_path
+
+
+def test_legacy_golden_repairs_clean() -> None:
+    # Companion to test_load_tasks.test_legacy_plan_parses_and_repairs_clean,
+    # kept here so this file's suite (the one every repair change runs) proves
+    # on its own that new warnings never fire on plans in the frozen v0.7 shape.
+    _, report = finalize.repair(LEGACY.read_text())
+    assert report["ok"] is True
+    assert report["fixes"] == [], f"legacy plan must repair with zero fixes, got {report['fixes']}"
+    assert report["warnings"] == [], (
+        f"legacy plan must repair with zero warnings, got {report['warnings']}"
+    )
 
 
 def test_repair_fixes_emdash_headers_and_missing_sections() -> None:
@@ -311,6 +325,123 @@ def test_repair_upserts_task_overview() -> None:
     twice, _ = finalize.repair(once)
     assert once == twice
     assert "a\\|b" in once
+
+
+LINKED_PLAN = """# Linked demo
+
+## Context
+
+ctx
+
+## Decisions made
+
+| # | Decision | Chosen | Rejected | Rationale |
+|---|----------|--------|----------|-----------|
+| 1 | A | B | C | because ([why b?](design.md#ANCHOR)) |
+
+## Architecture
+
+n/a
+
+## Tasks
+
+### Task 1: Add a thing
+
+**Target files**:
+- docs/thing.md (new)
+
+**Change**:
+Add a thing.
+
+**Verification**:
+```
+grep -q thing docs/thing.md
+```
+
+**Depends on**: none
+
+## References
+
+- docs/thing.md
+
+## Open questions
+
+- none
+"""
+
+LINKED_DESIGN = (
+    "# Design: linked demo\n\n"
+    "## Background\n\nprose\n\n"
+    "## When does a plan deserve an architecture.md?\n\nDecision stated first.\n\n"
+    "## Implementation notes\n"
+)
+
+
+def test_readability_warnings_dangling_headers_and_index_links() -> None:
+    # Dangling headers: an empty section warns once by name; a parent heading
+    # whose body is its own subheadings does not.
+    dangling = "## Empty section\n\n## Tasks\n\n### Task 1: x\n\nbody\n"
+    warns = finalize.warn_dangling_headers(dangling)
+    hits = [w for w in warns if "## Empty section" in w]
+    assert len(hits) == 1, f"expected exactly one dangling warning for '## Empty section', got {warns}"
+    assert not any("## Tasks" in w for w in warns), (
+        f"parent '## Tasks' over its own '### Task 1:' must not count as dangling, got {warns}"
+    )
+
+    # Index links: a punctuated question heading (dot and question mark)
+    # resolves via the slug rule; an unmatched anchor warns once by name.
+    good_plan = LINKED_PLAN.replace("ANCHOR", "when-does-a-plan-deserve-an-architecturemd")
+    assert finalize.warn_unresolved_decision_links(good_plan, LINKED_DESIGN) == [], (
+        "a decisions-index link matching a slugified design.md heading must not warn"
+    )
+    bad_plan = LINKED_PLAN.replace("ANCHOR", "missing")
+    bad = finalize.warn_unresolved_decision_links(bad_plan, LINKED_DESIGN)
+    assert len(bad) == 1 and "design.md#missing" in bad[0], (
+        f"expected exactly one warning naming design.md#missing, got {bad}"
+    )
+
+    # Sibling discovery: cmd_repair and cmd_archive both find design.md by
+    # path convention, warn without mutating, and a second pass agrees.
+    with tempfile.TemporaryDirectory() as d:
+        plans_dir = Path(d)
+        folder = plans_dir / "linked-demo"
+        folder.mkdir()
+        plan_path = folder / "plan.md"
+        normalized, _ = finalize.repair(bad_plan)
+        plan_path.write_text(normalized)
+        (folder / "design.md").write_text(LINKED_DESIGN)
+
+        rep = finalize.cmd_repair(plan_path)
+        assert rep["fixes"] == [], f"readability checks must not add fixes, got {rep['fixes']}"
+        assert plan_path.read_text() == normalized, (
+            "readability warnings must never mutate the plan text"
+        )
+        assert len([w for w in rep["warnings"] if "design.md#missing" in w]) == 1, (
+            f"cmd_repair must report the unresolved index link once, got {rep['warnings']}"
+        )
+        assert not any("Implementation notes" in w for w in rep["warnings"]), (
+            "design.md's legitimately-empty ## Implementation notes must stay exempt"
+        )
+
+        rep2 = finalize.cmd_repair(plan_path)
+        assert plan_path.read_text() == normalized and any(
+            "design.md#missing" in w for w in rep2["warnings"]
+        ), "a second repair pass must stay byte-identical and re-report the warning"
+
+        # No sibling design.md: the link check turns off entirely.
+        bare = plans_dir / "bare"
+        bare.mkdir()
+        (bare / "plan.md").write_text(normalized)
+        rep3 = finalize.cmd_repair(bare / "plan.md")
+        assert not any("design.md#" in w for w in rep3["warnings"]), (
+            f"without a sibling design.md the link check must not run, got {rep3['warnings']}"
+        )
+
+        arch = finalize.cmd_archive(plan=plan_path, plans_dir=plans_dir, slug="linked-demo")
+        assert arch["fixes"] == [], f"archive readability checks must not add fixes, got {arch['fixes']}"
+        assert any("design.md#missing" in w for w in arch["warnings"]), (
+            f"cmd_archive must share the sibling link check, got {arch['warnings']}"
+        )
 
 
 def test_archive_extracts_siblings() -> None:

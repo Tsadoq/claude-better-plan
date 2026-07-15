@@ -46,7 +46,8 @@ strictly. The ONLY paths you may write or edit during planning are:
 1. The plan folder in `plans_dir`: born as `plans_dir/<topic>-draft/` (its
    `plan.md` member) at the start of Phase 2, renamed to `plans_dir/<slug>/`
    at Phase 4.2. Writable both under its draft and its renamed name; members
-   are `plan.md`, `research.md`, `probes.md`, `design.md`.
+   are `plan.md`, `research.md`, `probes.md`, `design.md`, and (conditional,
+   written at Phase 4.4) `architecture.md`.
 2. The per-session sandbox at `${SANDBOX_DIR}`
    (`/tmp/deep-plan-${CLAUDE_SESSION_ID}/`), for verification probes that
    genuinely need scratch files (for example, writing a tiny pytest and
@@ -244,7 +245,7 @@ Goal: corroborate every chosen option with citations from official docs.
 
 **Each agent input**: `{decision, chosen_option, rejected_options, links_to_validate, success_criteria}`.
 
-**Each agent output**: `## Verdict`, `## Gotchas`, `## Versioning`, `## Canonical snippet`, optional `## Contradiction`.
+**Each agent output**: a question-first dossier in the format defined in `agents/dp-research-deep.md` (its normative home). The only orchestration-relevant signal is an optional `## Contradiction` section.
 
 **On contradiction**: loop back to Phase 2 for that single decision, quote the contradicting evidence in the new `AskUserQuestion`. Do not silently override the user's earlier choice.
 
@@ -293,9 +294,11 @@ Launch 2 to 4 `dp-plan-perspective` agents (inherit) in parallel: always one car
 
 ### 4.4 Synthesis
 
-Merge perspectives into a single plan body using `references/plan-file-template.md` as the skeleton, editing `plans_dir/<slug>/plan.md` in place over the draft-seeded sections. Include the `**Tests (TDD)**` subsection only for tasks that produce or modify code, carrying the template's full field schema per code task and applying `## Plan-time authoring rules` of `references/test-principles.md`; omit the subsection entirely for tasks whose output is markdown, docs, or config. Append the Phase 3 research dossiers verbatim under a `## Research dossiers` appendix so they survive into the archived folder members.
+Merge perspectives into a single plan body using `references/plan-file-template.md` as the skeleton, editing `plans_dir/<slug>/plan.md` in place over the draft-seeded sections, applying `## Plan-time authoring rules` of `references/readability-principles.md` to every section. Include the `**Tests (TDD)**` subsection only for tasks that produce or modify code, carrying the template's full field schema per code task and applying `## Plan-time authoring rules` of `references/test-principles.md`; omit the subsection entirely for tasks whose output is markdown, docs, or config. Append the Phase 3 research dossiers verbatim under a `## Research dossiers` appendix, opening it with the template's `### Coverage` preamble table -- one row per `## Decisions made` row, naming the dossier or why the decision was not researched -- so they survive into the archived folder members.
 
-**Seed design.md**: in the same sub-step, write `<plans_dir>/<slug>/design.md` from `references/design-md-template.md`: one `D{N}` subsection per row of the plan's `## Decisions made` table, carrying the expanded rationale (why chosen, why each alternative was rejected) and evidence links per the template's fallback rules (link into the sibling `research.md` when Phase 3 ran; cite Phase 1 evidence inline or write `n/a` otherwise). Leave `## Implementation notes` empty; the execute skill appends to it per completed task.
+**Seed design.md**: in the same sub-step, write `<plans_dir>/<slug>/design.md` per the narrative `references/design-md-template.md`: a `## Background` section, then one question-shaped section per row of the plan's `## Decisions made` table, each linked from that row's Rationale cell. Leave `## Implementation notes` empty; the execute skill appends to it per completed task.
+
+**Conditionally write architecture.md**: when the plan passes the significance test of `references/architecture-md-template.md` (its skip-list is the counter-rule), also write `<plans_dir>/<slug>/architecture.md` from that template. Skipping it is the common case.
 
 **Merge rules**:
 
@@ -312,12 +315,7 @@ grep -rl 'TokenBucket' src/
 uv run pytest --collect-only tests/middleware/
 ```
 
-Capture each probe's output into the plan's `## Verification probes` appendix as:
-
-```
-[probe N]: <command>
-<stdout, truncated to ~20 lines>
-```
+Capture each probe into the plan's `## Verification probes` appendix using the four-part entry shape defined in `references/plan-file-template.md` (the command line plus why it ran, what was observed, and what a failure would have meant).
 
 Probes that need fixture files write under `${SANDBOX_DIR}`. After approval, `finalize_plan.py --archive` extracts the `## Verification probes` and `## Research dossiers` appendices into the folder members `probes.md` and `research.md` so the final `plan.md` stays lean.
 
@@ -325,7 +323,7 @@ Probes that need fixture files write under `${SANDBOX_DIR}`. After approval, `fi
 
 Before asking for approval, try to break the plan. Launch `dp-plan-critic` (inherit) with the synthesized plan body, the `## Decisions made` table, the Phase 1 evidence, and the Phase 3 dossiers. The critic returns findings under `## Missing tasks`, `## Wrong or missing dependencies`, `## Code tasks lacking tests`, `## Decisions contradicted by research`, and `## Untested assumptions`, each tagged `material` or `minor`.
 
-In the same launch message, run the design fleet per `${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/fleet-orchestration.md`: one `dp-design-critic` (haiku) per red-flag cluster in `design-principles.md`, reviewing the synthesized plan body and its `## Architecture` section as a design artifact, then the adversarial verify stage from the same recipe (Workflow path when available, fallback otherwise). Also run the same recipe with `agentType: deep-plan:dp-test-critic`: one finder per H3 cluster of `## Review-time red flags` in `${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/references/test-principles.md`, reviewing every task's `**Tests (TDD)**` block. Design and test findings carry the same `material`/`minor` tags and merge into the handling below; they share the depth loop bounds already defined -- no separate knobs.
+In the same launch message, run the design fleet per `${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/fleet-orchestration.md`: one `dp-design-critic` (haiku) per red-flag cluster in `design-principles.md`, reviewing the synthesized plan body and its `## Architecture` section as a design artifact, then the adversarial verify stage from the same recipe (Workflow path when available, fallback otherwise). Also run the same recipe with `agentType: deep-plan:dp-test-critic`: one finder per H3 cluster of `## Review-time red flags` in `${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/references/test-principles.md`, reviewing every task's `**Tests (TDD)**` block. And run it once more with `agentType: deep-plan:dp-readability-critic`: one finder per H3 cluster of `## Review-time red flags` in `${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/references/readability-principles.md`, reviewing `plan.md`, `design.md`, and `architecture.md` when present as documents for a reader who was not in the session. Design, test, and readability findings carry the same `material`/`minor` tags and merge into the handling below; they share the depth loop bounds already defined -- no separate knobs.
 
 **Count and loop bound scale by depth** (Depth scaling table): shallow runs one quick pass and does not loop; standard runs one pass and loops back at most once if material findings remain; exhaustive re-runs the critic until a pass returns no material findings, capped at 3 rounds.
 
@@ -378,7 +376,7 @@ On approval (Checkpoint 2 option 1):
    This rewrites the lean `plans_dir/<slug>/plan.md` in place, stamps `**Status**: approved` and `**Date**` under the title, writes the `research.md` and `probes.md` members when those appendices exist, and regenerates the plans index at `<plans_dir>/README.md`. Then emit EXACTLY this message and stop the turn:
 
    ```
-   Plan approved and written to {plans_dir}/{slug}/plan.md (with research.md, probes.md, and design.md members when present; plans index refreshed at {plans_dir}/README.md).
+   Plan approved and written to {plans_dir}/{slug}/plan.md (with research.md, probes.md, design.md, and architecture.md members when present; plans index refreshed at {plans_dir}/README.md).
 
    Recommended next: run `/compact` (or `/clear` if you do not need any planning context preserved). The lean plan file is the canonical input for implementation; the planning chatter (agent dossiers, perspective drafts, decision option sets) is no longer needed and consumes context.
 

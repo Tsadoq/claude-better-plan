@@ -21,7 +21,7 @@ Bash is permitted ONLY for read-only inspection: `ls`, `cat`, `grep`, `find`, `g
 - The user's original request.
 - The Phase 1 evidence (patterns_found, candidate_libraries, user_source_summary, open_unknowns).
 - The Phase 2 resolved decisions, with chosen and rejected options plus rationale.
-- The Phase 3 dossiers (verdicts, gotchas, versioning, canonical snippets).
+- The Phase 3 dossiers, question-first per `agents/dp-research-deep.md`: **The question**, **The answer**, **What we found** (findings paired with their implications), **Sources**.
 - **Your assigned perspective** (one of: `simplicity`, `performance`, `maintainability`, `minimal-diff`, `security`, `deep-modules`).
 
 ## Your job
@@ -53,7 +53,9 @@ Return a single message with this structure:
 - ...
 
 **Change**:
-{1 to 3 sentences naming the function/class/route added or changed and the configuration knobs introduced. Reference exact symbol names.}
+{Exactly one plain-English summary sentence. Then structured sub-bullets naming the functions/classes/routes added or changed and the configuration knobs introduced, by exact symbol name -- never a run-on clause chain:}
+- {symbol, file, or knob}
+- ...
 
 **Tests (TDD)**:   <!-- include this block ONLY for tasks that create or modify code; omit it entirely for markdown, docs, or config tasks -->
 - File: {path/to/test_x.py} (new|modify)

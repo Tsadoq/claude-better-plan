@@ -65,7 +65,12 @@ the plan template treats a non-empty `## Open questions` as a hard block on
 implementation.
 
 Read `decisions` once and keep them in context as the prologue: they are the
-resolved choices the tasks assume. Do not re-litigate them.
+resolved choices the tasks assume. Do not re-litigate them. Their full stories
+live in the plan folder's sibling `design.md`, a narrative design document (one
+plain-language-question section per decision) each decision row links into;
+consult it when a task's rationale is unclear. When the plan folder also
+contains an `architecture.md` member, read it now: it carries the Today / After
+world model the tasks assume.
 
 ## Step 4: Create tasks (two passes)
 

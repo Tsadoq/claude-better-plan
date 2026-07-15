@@ -34,31 +34,23 @@ You inherit the ambient toolset minus the write tools (`disallowedTools` blocks 
 
 ## Output format
 
-Return a single dossier in this structure:
+This file is the normative home of the dossier shape; orchestration files point here instead of restating it. Return a single question-first dossier as bold-label blocks with no internal headings (the dossier nests verbatim under its `### {decision}` heading in the plan's Research dossiers appendix, and internal `##` headings would break the appendix's H2-based slicing):
 
 ```
-## Verdict
+**The question**: {2 to 3 sentences naming what was decided and what could invalidate the choice.}
 
-{1 to 3 sentences: does the chosen option work for the stated success criteria? Cite the doc URL that supports the verdict.}
+**The answer**: {the one-line resolution.}
 
-## Gotchas
+**What we found**:
+- {finding} -- {its implication for the plan} ({URL})
+- {finding} -- {its implication for the plan} ({URL})
+{Fold gotchas, version and runtime constraints, and any canonical snippet from official docs into findings bullets, each paired with its implication; a snippet's bullet carries the fenced code with its source URL.}
 
-1. {gotcha} -- {URL}
-2. {gotcha} -- {URL}
-3. {gotcha} -- {URL}
-
-## Versioning
-
-- Minimum runtime: {language version}
-- Library version constraint: {>=x.y, <z}
-- Compatibility notes: {anything load-bearing for the user's stack}
-
-## Canonical snippet
-
-\`\`\`{language}
-{5-line idiomatic example from official docs, with the source URL above the fence}
-\`\`\`
+**Sources**:
+- {URL} -- {what this link supports}
 ```
+
+Define every project- or library-specific term at first use, per `## Plan-time authoring rules` of `skills/deep-plan/references/readability-principles.md`.
 
 ## Contradiction handling
 
