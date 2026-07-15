@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Phase 0 bootstrap and state mutation for /deep-plan.
+"""Phase 0 bootstrap, state mutation, and project lookup for /deep-plan.
 
-Two modes:
+Three modes:
 
-1. Bootstrap (initial call, default when --update is absent):
+1. Bootstrap (initial call, default when --update and --lookup are absent):
        setup_session.py --session-id <ID>
    Resolves project root via `git rev-parse --show-toplevel` (falls back to
    cwd with `no_git=true` sentinel), reads
@@ -15,9 +15,18 @@ Two modes:
 
 2. Update (subsequent calls):
        setup_session.py --update key=value --session-id <ID>
-   Mutates the state file in place. Permitted keys: plans_dir, plan_path.
+   Mutates the state file in place. Permitted keys: plans_dir, plan_path,
+   last_plan_path.
 
-Both modes print a JSON blob to stdout describing the resulting state.
+3. Lookup (read-only; --session-id not required):
+       setup_session.py --lookup
+   Resolves the project root itself and prints
+   {ok, project_root, plans_dir, last_plan_path}. last_plan_path is null
+   unless the memoized plan file still exists and carries a
+   `**Status**: approved` line, so a stale memo resolves to null rather
+   than an error.
+
+All modes print a JSON blob to stdout describing the resulting state.
 """
 
 from __future__ import annotations
@@ -88,7 +97,17 @@ def _maybe_migrate_legacy() -> None:
 PERMITTED_UPDATE_KEYS = {
     "plans_dir",
     "plan_path",
+    "last_plan_path",
 }
+
+# Keys that outlive the session: mirrored into the project's durable record
+# so later sessions (and --lookup) can read them back.
+PROJECT_DURABLE_KEYS = ("plans_dir", "last_plan_path")
+
+# The plan-file line that marks a plan as approved. It is part of the plan
+# template's contract: /deep-plan writes it at Phase 5 approval and
+# /deep-plan-execute flips it to executed when done.
+APPROVED_STATUS_LINE = "**Status**: approved"
 
 
 def utcnow() -> str:
@@ -130,6 +149,16 @@ def load_projects() -> dict[str, dict[str, Any]]:
 def save_projects(data: dict[str, dict[str, Any]]) -> None:
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     PROJECTS_JSON.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+
+def persist_to_project(project_root: str, fields: dict[str, str]) -> None:
+    """Merge durable fields into the project's cross-session record."""
+    projects = load_projects()
+    record = projects.get(project_root, {})
+    record.update(fields)
+    record["last_used_at"] = utcnow()
+    projects[project_root] = record
+    save_projects(projects)
 
 
 def candidate_plans_dirs(project_root: Path) -> list[dict[str, str]]:
@@ -212,9 +241,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     if record and record.get("plans_dir"):
         plans_dir = str(record["plans_dir"])
         prompt_for_plans_dir = False
-        record["last_used_at"] = utcnow()
-        projects[project_key] = record
-        save_projects(projects)
+        persist_to_project(project_key, {})
 
     sandbox = ensure_sandbox(args.session_id)
 
@@ -263,33 +290,70 @@ def cmd_update(args: argparse.Namespace) -> dict[str, Any]:
         plans_dir_path = Path(updates["plans_dir"]).resolve()
         plans_dir_path.mkdir(parents=True, exist_ok=True)
         state["plans_dir"] = str(plans_dir_path)
-        projects = load_projects()
-        project_key = str(state["project_root"])
-        record = projects.get(project_key, {})
-        record["plans_dir"] = str(plans_dir_path)
-        record["last_used_at"] = utcnow()
-        projects[project_key] = record
-        save_projects(projects)
+        updates["plans_dir"] = str(plans_dir_path)
+    durable = {k: str(updates[k]) for k in PROJECT_DURABLE_KEYS if k in updates}
+    if durable:
+        persist_to_project(str(state["project_root"]), durable)
 
     write_state(args.session_id, state)
     return {"ok": True, **state}
 
 
+def _approved_plan_or_none(path: Any) -> str | None:
+    """Return the memoized plan path only while it is still trustworthy.
+
+    A memo is stale once the plan file is gone or no longer carries the
+    approved Status line; staleness is defined out of existence (null),
+    never raised to callers.
+    """
+    if not isinstance(path, str) or not path:
+        return None
+    try:
+        text = Path(path).read_text()
+    except OSError:
+        return None
+    return path if APPROVED_STATUS_LINE in text else None
+
+
+def cmd_lookup(args: argparse.Namespace) -> dict[str, Any]:
+    """Read-only project lookup; production caller is deep-plan-execute Step 1."""
+    del args
+    ensure_runtime_dirs()
+    project_root, _no_git = detect_project_root(Path.cwd())
+    record = load_projects().get(str(project_root), {})
+    return {
+        "ok": True,
+        "project_root": str(project_root),
+        "plans_dir": record.get("plans_dir"),
+        "last_plan_path": _approved_plan_or_none(record.get("last_plan_path")),
+    }
+
+
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="deep-plan session bootstrap and state mutation")
-    p.add_argument("--session-id", required=True)
+    p = argparse.ArgumentParser(description="deep-plan session bootstrap, state mutation, and lookup")
+    p.add_argument("--session-id", help="required for bootstrap and update modes")
     p.add_argument(
         "--update",
         nargs="*",
         default=[],
         help="key=value pairs (repeatable). When absent, the call bootstraps the session.",
     )
-    return p.parse_args()
+    p.add_argument(
+        "--lookup",
+        action="store_true",
+        help="read-only: print {ok, project_root, plans_dir, last_plan_path} for the cwd's project",
+    )
+    args = p.parse_args()
+    if not args.lookup and not args.session_id:
+        p.error("--session-id is required for bootstrap and update modes")
+    return args
 
 
 def main() -> int:
     args = parse_args()
-    if args.update:
+    if args.lookup:
+        result = cmd_lookup(args)
+    elif args.update:
         result = cmd_update(args)
     else:
         result = cmd_bootstrap(args)

@@ -40,5 +40,5 @@ The three H2 headings above and the single-cluster H3 structure under "Review-ti
 - `skills/deep-plan/references/plan-file-template.md` (formatting rules: authoring-rules pointer)
 - `agents/dp-research-deep.md` (jargon-at-first-use pointer)
 - `agents/dp-readability-critic.md` (receives the red-flag cluster, quoted by the caller)
-- `skills/deep-plan/SKILL.md` and `skills/deep-plan/references/phase-prompts.md` (Phase 4.4 authoring: plan-time authoring rules; Phase 4.6: the red-flag cluster)
+- `skills/deep-plan/SKILL.md` (Phase 4.6: the red-flag cluster) and `skills/deep-plan/references/phase-prompts.md` (Phase 4.4 authoring: plan-time authoring rules; Phase 4.6: the red-flag cluster)
 - `skills/deep-plan/scripts/finalize_plan.py` (implements the anchor-slug rule and the dangling-section warning mechanically)

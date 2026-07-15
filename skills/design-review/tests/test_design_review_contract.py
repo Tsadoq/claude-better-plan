@@ -6,8 +6,8 @@ its sections by heading never silently break. Stdlib only, so CI does not
 need pyyaml.
 
 Runnable two ways:
-    python3 skills/deep-plan/tests/test_design_review_contract.py
-    python3 -m pytest skills/deep-plan/tests/test_design_review_contract.py
+    python3 skills/design-review/tests/test_design_review_contract.py
+    python3 -m pytest skills/design-review/tests/test_design_review_contract.py
 """
 
 from __future__ import annotations
@@ -59,6 +59,20 @@ def test_design_principles_structure() -> None:
     attribution = _section(text, "## Attribution and scope")
     for needle in ("2nd edition", "2021", "not affiliated"):
         assert needle in attribution, f"attribution section missing {needle!r}"
+
+
+def test_registry_names_colocated_pinning_test() -> None:
+    registry = _section(DESIGN_PRINCIPLES.read_text(), "## How to update these guidelines")
+    assert registry, (
+        "design-principles.md lost its '## How to update these guidelines' section"
+    )
+    assert "skills/design-review/tests/test_design_review_contract.py" in registry, (
+        "the consumer registry must name the co-located pinning test path"
+    )
+    assert "skills/deep-plan/tests/test_design_review_contract.py" not in registry, (
+        "stale pinning-test path skills/deep-plan/tests/test_design_review_contract.py "
+        "must not survive in the registry"
+    )
 
 
 def test_fleet_orchestration_contract() -> None:

@@ -39,7 +39,7 @@ Draft a `## Tasks` block that an implementation turn could execute. Apply your a
 
 ## Output format
 
-Before drafting any `**Tests (TDD)**` block, read and apply `## Plan-time authoring rules` of `${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/references/test-principles.md`; each rule maps onto one field below.
+Before drafting any `**Tests (TDD)**` block, read and apply `## Plan-time authoring rules` of `${CLAUDE_PLUGIN_ROOT}/skills/tdd-review/references/test-principles.md`; each rule maps onto one field below.
 
 Return a single message with this structure:
 

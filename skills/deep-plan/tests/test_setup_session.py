@@ -11,6 +11,8 @@ import importlib.util
 import json
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
 import types
 from pathlib import Path
@@ -57,7 +59,7 @@ def test_bootstrap_state_drops_dead_fields_and_uses_plan_path() -> None:
         for dead in dead_fields:
             assert dead not in on_disk, f"dead field {dead!r} still in on-disk state"
 
-        assert setup.PERMITTED_UPDATE_KEYS == {"plans_dir", "plan_path"}
+        assert setup.PERMITTED_UPDATE_KEYS == {"plans_dir", "plan_path", "last_plan_path"}
     finally:
         shutil.rmtree(Path("/tmp") / f"deep-plan-{sid}", ignore_errors=True)
 
@@ -107,6 +109,64 @@ def test_update_plans_dir_persists_and_creates_dir() -> None:
             assert projects[root]["plans_dir"] == str(target.resolve())
     finally:
         shutil.rmtree(Path("/tmp") / f"deep-plan-{sid}", ignore_errors=True)
+
+
+def test_last_plan_path_roundtrip_gated_on_approval() -> None:
+    sid = "pytest-last-plan-memo"
+    projects_file = Path(_TMP) / "deep-plan" / "projects.json"
+    saved = projects_file.read_text() if projects_file.exists() else None
+    try:
+        setup.cmd_bootstrap(types.SimpleNamespace(session_id=sid))
+        with tempfile.TemporaryDirectory() as d:
+            plan = Path(d) / "plan.md"
+            plan.write_text("# Some plan\n\n**Status**: approved\n")
+            recorded = setup.cmd_update(
+                types.SimpleNamespace(session_id=sid, update=[f"last_plan_path={plan}"])
+            )
+            assert recorded["ok"] is True
+
+            found = setup.cmd_lookup(types.SimpleNamespace())
+            assert found["last_plan_path"] == str(plan), (
+                "lookup must return the memoized path while the plan is approved"
+            )
+
+            plan.write_text("# Some plan\n\n**Status**: draft\n")
+            unapproved = setup.cmd_lookup(types.SimpleNamespace())
+            assert unapproved["ok"] is True and unapproved["last_plan_path"] is None, (
+                "a memo whose plan lost its approved Status must resolve to null, not error"
+            )
+
+            plan.unlink()
+            missing = setup.cmd_lookup(types.SimpleNamespace())
+            assert missing["ok"] is True and missing["last_plan_path"] is None, (
+                "a memo pointing at a deleted plan must resolve to null, not error"
+            )
+    finally:
+        if saved is not None:
+            projects_file.write_text(saved)
+        shutil.rmtree(Path("/tmp") / f"deep-plan-{sid}", ignore_errors=True)
+
+
+def test_lookup_cli_runs_without_session_id() -> None:
+    # The CLI layer is the unit under test here: --lookup must work bare,
+    # while the other modes still demand --session-id. The child inherits
+    # this module's XDG_STATE_HOME redirect via os.environ.
+    script = SCRIPTS / "setup_session.py"
+    looked_up = subprocess.run(
+        [sys.executable, str(script), "--lookup"], capture_output=True, text=True
+    )
+    assert looked_up.returncode == 0, (
+        f"--lookup must not require --session-id: {looked_up.stderr}"
+    )
+    out = json.loads(looked_up.stdout)
+    assert out["ok"] is True
+    assert set(out) == {"ok", "project_root", "plans_dir", "last_plan_path"}, (
+        "lookup output must carry exactly the documented keys"
+    )
+
+    bootstrap = subprocess.run([sys.executable, str(script)], capture_output=True, text=True)
+    assert bootstrap.returncode != 0, "bootstrap without --session-id must be rejected"
+    assert "--session-id is required" in bootstrap.stderr
 
 
 def test_unknown_update_key_rejected() -> None:
@@ -218,7 +278,6 @@ def test_legacy_migration_copies_once() -> None:
 
 
 if __name__ == "__main__":
-    import sys
     import traceback
 
     failed = 0
