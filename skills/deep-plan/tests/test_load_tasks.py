@@ -17,11 +17,13 @@ from typing import Any
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 GOLDEN = Path(__file__).resolve().parent / "golden" / "example-plan.md"
+LEGACY = Path(__file__).resolve().parent / "golden" / "legacy-plan.md"
 
 # load_tasks imports finalize_plan as a sibling; put scripts/ on the path so
 # both resolve when the test runner's cwd is elsewhere.
 sys.path.insert(0, str(SCRIPTS))
 
+import finalize_plan  # noqa: E402
 import load_tasks  # noqa: E402
 
 
@@ -81,6 +83,33 @@ def test_malformed_depends_on_degrades_to_empty() -> None:
     # Garbage must not raise; it degrades to an empty list.
     assert load_tasks.parse_depends_on("see task above") == []
     assert load_tasks.parse_depends_on("") == []
+
+
+def test_legacy_plan_parses_and_repairs_clean() -> None:
+    # legacy-plan.md is a byte-frozen copy of the v0.7 golden: plans authored
+    # under the old format must keep parsing and repairing clean forever.
+    legacy = LEGACY.read_text()
+
+    parsed = load_tasks.parse_plan(legacy)
+    tasks = parsed["tasks"]
+    assert len(tasks) == 2, f"legacy fixture must keep its 2 tasks, got {len(tasks)}"
+    t1, t2 = tasks
+    assert t1["n"] == 1 and t1["depends_on"] == [], (
+        f"legacy task 1 must parse with no deps, got {t1['depends_on']}"
+    )
+    assert t2["n"] == 2 and t2["depends_on"] == [1], (
+        f"legacy task 2 must keep depending on task 1, got {t2['depends_on']}"
+    )
+    assert parsed["decisions"][0]["chosen"] == "Redis", (
+        "legacy decision row 1 must keep parsing into its five cells"
+    )
+
+    _, report = finalize_plan.repair(legacy)
+    assert report["ok"] is True
+    assert report["fixes"] == [], f"legacy plan must repair with zero fixes, got {report['fixes']}"
+    assert report["warnings"] == [], (
+        f"legacy plan must repair with zero warnings, got {report['warnings']}"
+    )
 
 
 def test_decisions_and_open_questions_surface() -> None:

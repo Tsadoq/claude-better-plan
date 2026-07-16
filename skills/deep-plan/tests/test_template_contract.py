@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent  # skills/deep-plan
 SCRIPTS = ROOT / "scripts"
 TEMPLATE = ROOT / "references" / "plan-file-template.md"
 GOLDEN = Path(__file__).resolve().parent / "golden" / "example-plan.md"
+PERSPECTIVE = Path(__file__).resolve().parents[3] / "agents" / "dp-plan-perspective.md"
 
 REQUIRED = [
     "## Context",
@@ -87,6 +88,64 @@ def test_template_declares_overview_markers_and_summary_rule() -> None:
     # The dotted-sibling naming is gone.
     assert "<slug>.probes.md" not in text
     assert "<slug>.research.md" not in text
+
+
+def test_template_declares_decisions_index_and_change_shape() -> None:
+    text = TEMPLATE.read_text()
+    skeleton = _extract_skeleton(text)
+
+    # The decisions table is an index: each row's Rationale cell points into
+    # the sibling design.md by anchor link instead of carrying the full story.
+    assert "design.md#" in skeleton, (
+        "skeleton decisions row must carry a design.md# anchor-link placeholder"
+    )
+
+    # Formatting rules declare the structured Change shape, the conditional
+    # architecture.md member, and the pointer to the readability rules' home.
+    assert "structured sub-bullets" in text, (
+        "formatting rules must state the summary-sentence-then-sub-bullets Change rule"
+    )
+    assert "architecture.md" in text, (
+        "the template must name the conditional architecture.md folder member"
+    )
+    assert "readability-principles.md" in text, (
+        "formatting rules must point at readability-principles.md authoring rules"
+    )
+
+    # Probe entries explain themselves in four parts around the machine-stable
+    # [probe N] first line.
+    assert "[probe 1]:" in skeleton, "probes appendix must keep the [probe N] grep anchor"
+    for part in ("Why:", "If it had failed:"):
+        assert part in skeleton, f"probes appendix skeleton missing the {part!r} line"
+
+    # The dossier appendix opens with the coverage table and defers the dossier
+    # shape to its normative home instead of restating the retired labels.
+    assert "| # | Decision | Dossier | Not researched because |" in skeleton, (
+        "dossier appendix must open with the research coverage table header"
+    )
+    assert "Canonical snippet" not in text, (
+        "the retired dossier section list must not survive in the template"
+    )
+
+    # The perspective agent drafts Change blocks in the same shape.
+    perspective = PERSPECTIVE.read_text()
+    assert "structured sub-bullets" in perspective, (
+        "dp-plan-perspective.md output format must mirror the "
+        "summary-sentence-then-sub-bullets Change rule"
+    )
+
+    # The golden plan exercises the house style: an indexed decision row and a
+    # sub-bulleted Task 1 Change block.
+    golden = GOLDEN.read_text()
+    decisions = golden[golden.index("## Decisions made") : golden.index("## Architecture")]
+    assert re.search(r"\]\(design\.md#[a-z0-9-]+\)", decisions), (
+        "golden decisions table must link at least one rationale into design.md"
+    )
+    task1 = golden[golden.index("### Task 1") : golden.index("**Tests (TDD)**")]
+    change1 = task1[task1.index("**Change**") :]
+    assert "\n- " in change1, (
+        "golden Task 1 Change must continue in sub-bullets after its summary sentence"
+    )
 
 
 def test_golden_plan_has_no_fixes_or_warnings() -> None:

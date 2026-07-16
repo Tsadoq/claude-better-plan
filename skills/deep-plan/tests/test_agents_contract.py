@@ -18,6 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 AGENTS_DIR = Path(__file__).resolve().parents[3] / "agents"
+DEEP_PLAN = Path(__file__).resolve().parents[1]  # skills/deep-plan
 
 # Research agents and the critic fleet leaves have no legitimate need for
 # Bash, so they block it outright and become genuinely write-free. The
@@ -29,6 +30,7 @@ BASH_FREE = {
     "dp-source-ingest",
     "dp-design-critic",
     "dp-test-critic",
+    "dp-readability-critic",
 }
 
 WRITE_TOOLS = {"Write", "Edit", "NotebookEdit"}
@@ -100,6 +102,54 @@ def test_design_critic_agent_present() -> None:
     assert not missing, f"{path.name}: disallowedTools missing {sorted(missing)}"
 
 
+def _phase3_region(text: str, source: str) -> str:
+    start = text.find("## Phase 3")
+    end = text.find("## Phase 4")
+    assert start != -1 and end != -1, f"{source}: Phase 3/Phase 4 headings missing"
+    return text[start:end]
+
+
+def test_research_deep_dossier_format() -> None:
+    research = (AGENTS_DIR / "dp-research-deep.md").read_text()
+
+    # The dossier is question-first, as bold-label blocks (no internal H2s,
+    # so it nests under a ### heading in the plan appendix without breaking
+    # the H2-based appendix slicing).
+    labels = ["**The question**", "**The answer**", "**What we found**", "**Sources**"]
+    pos = -1
+    for label in labels:
+        found = research.find(label, pos + 1)
+        assert found > pos, (
+            f"dp-research-deep.md: dossier label {label!r} missing or out of order"
+        )
+        pos = found
+    assert "## Contradiction" in research, (
+        "dp-research-deep.md must keep the ## Contradiction escape hatch"
+    )
+    assert "## Verdict" not in research, (
+        "dp-research-deep.md: the retired ## Verdict dossier heading must not resurface"
+    )
+
+    # The orchestration files stop restating the dossier section list and
+    # point at the agent file as its normative home.
+    for path in (DEEP_PLAN / "SKILL.md", DEEP_PLAN / "references" / "phase-prompts.md"):
+        region = _phase3_region(path.read_text(), path.name)
+        assert "Canonical snippet" not in region, (
+            f"{path.name}: Phase 3 must not restate the retired dossier section list"
+        )
+        assert "dp-research-deep.md" in region, (
+            f"{path.name}: Phase 3 must name dp-research-deep.md as the dossier's home"
+        )
+
+    critic = (AGENTS_DIR / "dp-plan-critic.md").read_text()
+    assert "The question" in critic, (
+        "dp-plan-critic.md inputs must be briefed on the question-first dossier labels"
+    )
+    assert "gotchas" not in critic, (
+        "dp-plan-critic.md must not keep the retired verdicts/gotchas/versioning vocabulary"
+    )
+
+
 def test_test_critic_agent_present() -> None:
     path = AGENTS_DIR / "dp-test-critic.md"
     assert path.exists(), f"missing test critic agent: {path}"
@@ -116,6 +166,26 @@ def test_test_critic_agent_present() -> None:
     assert not missing, f"{path.name}: disallowedTools missing {sorted(missing)}"
 
     assert "dp-test-critic" in BASH_FREE, "dp-test-critic must be registered bash-free"
+
+
+def test_readability_critic_agent_present() -> None:
+    path = AGENTS_DIR / "dp-readability-critic.md"
+    assert path.exists(), f"missing readability critic agent: {path}"
+    fm = _frontmatter(path.read_text())
+    assert fm, f"{path.name}: missing frontmatter"
+
+    assert not _has_tools_allowlist(fm), (
+        f"{path.name}: declares a `tools:` allowlist, which strips ambient MCP access"
+    )
+
+    disallowed = _disallowed_tools(fm)
+    required = WRITE_TOOLS | {"Bash", "Agent"}
+    missing = required - disallowed
+    assert not missing, f"{path.name}: disallowedTools missing {sorted(missing)}"
+
+    assert "dp-readability-critic" in BASH_FREE, (
+        "dp-readability-critic must be registered bash-free"
+    )
 
 
 if __name__ == "__main__":

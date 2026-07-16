@@ -54,9 +54,10 @@ Each plan lives in its own folder, `plans_dir/<slug>/` (default `docs/plans/<slu
 | Member | Content |
 |--------|---------|
 | `plan.md` | The canonical plan: context, decisions table, a generated at-a-glance `## Task overview` table, and the tasks with embedded TDD criteria. Carries a `**Status**` line (`draft` -> `approved` -> `executed`). |
-| `design.md` | The why: expanded per-decision rationale seeded at plan time, plus terse per-task implementation notes appended during execution. |
-| `research.md` | The deep-research dossiers, split out on archive so `plan.md` stays lean. |
-| `probes.md` | The verification-probe outputs, split out the same way. |
+| `design.md` | The why, told as a narrative design document: a Background section, then one plain-language-question section per decision (the plan's decisions table links into them), plus terse per-task implementation notes appended during execution. |
+| `architecture.md` | Conditional: the Today / After world model, written only for architecturally significant plans (skipped when the change is reversible within a sprint, contained in one component, or routine). |
+| `research.md` | The question-first research dossiers with an opening coverage table (one row per decision), split out on archive so `plan.md` stays lean. |
+| `probes.md` | The verification probes -- why each ran, the command, what was observed, and what a failure would have meant -- split out the same way. |
 
 Archiving also regenerates `plans_dir/README.md`, a browsable index of every plan with title, status, and date. The index and the task-overview table are fully generated between HTML-comment markers: never hand-edit them, re-run `finalize_plan.py --repair` / `--index` instead (that is also how you resolve a merge conflict in them). Plans created by older plugin versions as flat files with legacy dotted siblings are still discovered read-only; they are never rewritten.
 

@@ -178,8 +178,9 @@ Inputs to each agent:
 - links_to_validate: any URLs from Phase 1 dp-research-shallow
 - success_criteria: 1 to 2 specific things the dossier must confirm or deny
 
-Each agent returns a dossier with sections: ## Verdict, ## Gotchas, ## Versioning,
-## Canonical snippet, and optionally ## Contradiction.
+Each agent returns a question-first dossier in the format defined in
+agents/dp-research-deep.md (its normative home); the only orchestration-relevant
+signal is an optional ## Contradiction section.
 
 If any dossier returns ## Contradiction, loop back to Phase 2 for that decision only.
 Quote the contradicting evidence in the new AskUserQuestion. Do not silently override
@@ -220,18 +221,23 @@ Sub-steps in order:
 
 4. Synthesis: merge perspectives into a single plan body using
    references/plan-file-template.md as the skeleton, editing plans_dir/<slug>/plan.md
-   in place over the draft-seeded sections. Include the **Tests (TDD)** subsection
-   only for tasks that produce or modify code, carrying the template's full field
-   schema per code task and applying ## Plan-time authoring rules of
-   ${CLAUDE_PLUGIN_ROOT}/skills/tdd-review/references/test-principles.md;
+   in place over the draft-seeded sections and applying ## Plan-time authoring rules
+   of references/readability-principles.md to every section. Include the
+   **Tests (TDD)** subsection only for tasks that produce or modify code, carrying
+   the template's full field schema per code task and applying ## Plan-time
+   authoring rules of ${CLAUDE_PLUGIN_ROOT}/skills/tdd-review/references/test-principles.md;
    omit it for markdown, docs, or config tasks. Append the Phase 3 dossiers
-   verbatim under a ## Research dossiers appendix so they survive into the
+   verbatim under a ## Research dossiers appendix, opening it with the template's
+   ### Coverage preamble table (one row per ## Decisions made row, naming the
+   dossier or why the decision was not researched), so they survive into the
    archived folder members.
-   In the same sub-step, seed <plans_dir>/<slug>/design.md from
-   references/design-md-template.md: one D{N} subsection per decision row with the
-   expanded rationale and evidence links (into the sibling research.md when Phase 3
-   ran; Phase 1 evidence inline or n/a otherwise). Leave ## Implementation notes
-   empty; the execute skill appends to it per completed task.
+   In the same sub-step, seed <plans_dir>/<slug>/design.md per the narrative
+   references/design-md-template.md: a ## Background section, then one
+   question-shaped section per decision row, each linked from that row's Rationale
+   cell. Leave ## Implementation notes empty; the execute skill appends to it per
+   completed task. When the plan passes the significance test of
+   references/architecture-md-template.md (its skip-list is the counter-rule), also
+   write <plans_dir>/<slug>/architecture.md from that template.
    Merge rules:
    - When perspectives disagree on task ordering or test scope, prefer the union (additive).
    - When perspectives disagree on architectural choice, that means a sub-decision was
@@ -241,9 +247,9 @@ Sub-steps in order:
        python3 -c "import redis; print(redis.__version__)"
        grep -rl 'TokenBucket' src/
        uv run pytest --collect-only tests/middleware/
-   Capture each probe's output into the plan's `## Verification probes` appendix as:
-       [probe N]: <command>
-       <stdout, truncated to ~20 lines>
+   Capture each probe into the plan's `## Verification probes` appendix using the
+   four-part entry shape defined in references/plan-file-template.md (the command
+   line plus why it ran, what was observed, and what a failure would have meant).
    Probes run sequentially for deterministic ordering. Probes that need to write
    fixtures write under the sandbox; the hook permits this.
 
@@ -269,9 +275,12 @@ recipe's adversarial verify stage (Workflow path when available, fallback otherw
 Also run the same recipe with agentType deep-plan:dp-test-critic: one finder per H3
 cluster of ## Review-time red flags in
 ${CLAUDE_PLUGIN_ROOT}/skills/tdd-review/references/test-principles.md, reviewing
-every task's **Tests (TDD)** block. Design and test findings carry the same
-material|minor tags, merge into the handling below, and share the depth loop
-bounds; no separate knobs.
+every task's **Tests (TDD)** block. And run it once more with agentType
+deep-plan:dp-readability-critic: one finder per H3 cluster of ## Review-time red
+flags in ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/references/readability-principles.md,
+reviewing plan.md, design.md, and architecture.md when present as documents.
+Design, test, and readability findings carry the same material|minor tags, merge
+into the handling below, and share the depth loop bounds; no separate knobs.
 
 Count and loop bound scale by depth (SKILL.md Depth scaling table):
 - shallow:    one quick pass, no loop.
@@ -330,8 +339,8 @@ Other branches loop back appropriately.
          --update last_plan_path=<plans_dir>/<slug>/plan.md --session-id ${CLAUDE_SESSION_ID}
 
        Plan approved and written to {plans_dir}/{slug}/plan.md (with research.md,
-       probes.md, and design.md members when present; plans index refreshed at
-       {plans_dir}/README.md).
+       probes.md, design.md, and architecture.md members when present; plans index
+       refreshed at {plans_dir}/README.md).
 
        Recommended next: run `/compact` (or `/clear` if you do not need any planning
        context preserved). The lean plan file is the canonical input for implementation;

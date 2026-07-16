@@ -46,11 +46,11 @@ strictly. The ONLY paths you may write or edit during planning are:
 1. The plan folder in `plans_dir`: born as `plans_dir/<topic>-draft/` (its
    `plan.md` member) at the start of Phase 2, renamed to `plans_dir/<slug>/`
    at Phase 4.2. Writable both under its draft and its renamed name; members
-   are `plan.md`, `research.md`, `probes.md`, `design.md`.
+   are `plan.md`, `research.md`, `probes.md`, `design.md`, and the
+   conditional `architecture.md`.
 2. The per-session sandbox at `${SANDBOX_DIR}`
    (`/tmp/deep-plan-${CLAUDE_SESSION_ID}/`), for verification probes that
-   genuinely need scratch files (for example, writing a tiny pytest and
-   running it).
+   genuinely need scratch files.
 
 Treat everything else in the repository as read-only until the user approves
 the plan at Checkpoint 2. Helper scripts manage the session state file under
@@ -66,20 +66,17 @@ project can allowlist the plan paths once in its `.claude/settings.json`
 ```
 
 The `Bash(test ! -e docs/plans/*)` rule exists because compound commands are
-permission-checked per segment: the Phase 4.2 rename prefixes `mv` with two
-`test ! -e` guards, and a `test`-prefixed segment is not matched by the `mv`
-rule.
+permission-checked per segment (the Phase 4.2 rename prefixes `mv` with two
+`test ! -e` guards, which the `mv` rule does not match).
 
 The subagents are NOT held read-only by `permissionMode` (the harness ignores
 `permissionMode`, `hooks`, and `mcpServers` on plugin-bundled agents). They are
 read-only because each `dp-*` agent declares a `disallowedTools` list that blocks
-`Write`, `Edit`, and `NotebookEdit`, reinforced by a read-only system prompt. The
-research agents (`dp-research-shallow`, `dp-research-deep`, `dp-source-ingest`)
-and the design critic (`dp-design-critic`) also disallow `Bash`, so they have no
-shell write vector at all. `dp-explore-codebase`,
-`dp-plan-perspective`, and `dp-plan-critic` keep `Bash` for read-only inspection;
-that Bash is a residual theoretical write vector, mitigated by the prompt and the
-trusted-session model, not a hard sandbox. Dropping the `tools` allowlist for
+`Write`, `Edit`, and `NotebookEdit`, reinforced by a read-only system prompt; the
+research agents and the critic-fleet leaves also disallow `Bash` (no shell write
+vector), while `dp-explore-codebase`, `dp-plan-perspective`, and `dp-plan-critic`
+keep `Bash` for read-only inspection -- a residual vector mitigated by the prompt
+and the trusted-session model. Dropping the `tools` allowlist for
 `disallowedTools` is also what lets the agents reach any ambient MCP documentation
 tools during research.
 
@@ -217,7 +214,7 @@ Goal: enumerate two to five sub-decisions, generate option sets inline, resolve 
 - The codebase has one dominant pattern (3+ examples of pattern X, 0 of others). Log under `## Decisions made` with rationale "follows existing convention".
 - The user's prompt explicitly fixes the choice ("use Redis").
 
-**Design framing**: when generating options for architectural-axis and boundary-placement decisions, consult the `## Plan-time principles` section of `${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/design-principles.md`. Prefer options that deepen module interfaces over options that add layers or knobs. If an option would introduce a red flag (a pass-through layer, information leakage across modules), name that inside the option's description so the user chooses with eyes open.
+**Design framing**: when generating options for architectural-axis and boundary-placement decisions, consult the `## Plan-time principles` section of `${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/design-principles.md`: prefer options that deepen module interfaces; when an option would introduce a red flag (a pass-through layer, information leakage), name it in the option's description so the user chooses with eyes open.
 
 **Cap**: 5 surfaced decisions. Excess goes to `## Open questions` or a follow-up plan.
 
@@ -237,7 +234,7 @@ Goal: corroborate every chosen option with citations from official docs.
 
 **Each agent input**: `{decision, chosen_option, rejected_options, links_to_validate, success_criteria}`.
 
-**Each agent output**: `## Verdict`, `## Gotchas`, `## Versioning`, `## Canonical snippet`, optional `## Contradiction`.
+**Each agent output**: a question-first dossier in the format defined in `agents/dp-research-deep.md` (its normative home). The only orchestration-relevant signal is an optional `## Contradiction` section.
 
 **On contradiction**: loop back to Phase 2 for that single decision, quote the contradicting evidence in the new `AskUserQuestion`. Do not silently override the user's earlier choice.
 
@@ -259,9 +256,11 @@ Launch 2 to 4 `dp-plan-perspective` agents (inherit) in parallel: always one car
 
 ### 4.4 Synthesis
 
-Merge perspectives into a single plan body using `references/plan-file-template.md` as the skeleton, editing `plans_dir/<slug>/plan.md` in place over the draft-seeded sections. Include the `**Tests (TDD)**` subsection only for tasks that produce or modify code, carrying the template's full field schema per code task and applying `## Plan-time authoring rules` of `${CLAUDE_PLUGIN_ROOT}/skills/tdd-review/references/test-principles.md`; omit the subsection entirely for tasks whose output is markdown, docs, or config. Append the Phase 3 research dossiers verbatim under a `## Research dossiers` appendix so they survive into the archived folder members.
+Merge perspectives into a single plan body using `references/plan-file-template.md` as the skeleton, editing `plans_dir/<slug>/plan.md` in place over the draft-seeded sections. Include the `**Tests (TDD)**` subsection only for tasks that produce or modify code, carrying the template's full field schema per code task and applying `## Plan-time authoring rules` of `${CLAUDE_PLUGIN_ROOT}/skills/tdd-review/references/test-principles.md`; omit the subsection entirely for tasks whose output is markdown, docs, or config. Append the Phase 3 research dossiers verbatim under a `## Research dossiers` appendix, opening it with the template's `### Coverage` table (one row per decision), so they survive into the archived folder members.
 
-**Seed design.md**: in the same sub-step, write `<plans_dir>/<slug>/design.md` from `references/design-md-template.md`: one `D{N}` subsection per row of the plan's `## Decisions made` table, carrying the expanded rationale (why chosen, why each alternative was rejected) and evidence links per the template's fallback rules (link into the sibling `research.md` when Phase 3 ran; cite Phase 1 evidence inline or write `n/a` otherwise). Leave `## Implementation notes` empty; the execute skill appends to it per completed task.
+**Seed design.md**: in the same sub-step, write `<plans_dir>/<slug>/design.md` per the narrative `references/design-md-template.md` (Background, then one question-shaped section per decision row, linked from that row's Rationale cell; `## Implementation notes` starts empty for the execute skill's per-task appends).
+
+**Conditionally write architecture.md** from `references/architecture-md-template.md` when the plan passes that template's significance test; skipping is the common case.
 
 **Merge rules**:
 
@@ -270,11 +269,11 @@ Merge perspectives into a single plan body using `references/plan-file-template.
 
 ### 4.5 Verification probes
 
-Run inline `Bash` probes against design assumptions (sequentially, fixtures under `${SANDBOX_DIR}`) and capture the outputs into the plan's `## Verification probes` appendix (format and examples in the Phase 4 fragment). `finalize_plan.py --archive` later extracts that appendix and `## Research dossiers` into the folder members `probes.md` and `research.md`.
+Run inline `Bash` probes against design assumptions (sequentially, fixtures under `${SANDBOX_DIR}`) and capture each into the plan's `## Verification probes` appendix using the four-part entry shape of `references/plan-file-template.md` (examples in the Phase 4 fragment). `finalize_plan.py --archive` later extracts that appendix and `## Research dossiers` into the folder members `probes.md` and `research.md`.
 
 ## Phase 4.6: Adversarial critique
 
-Before asking for approval, try to break the plan: launch `dp-plan-critic`, one `dp-design-critic` per design red-flag cluster, and one `dp-test-critic` per cluster of `skills/tdd-review/references/test-principles.md`, per the recipe in `skills/design-review/references/fleet-orchestration.md` (both under `${CLAUDE_PLUGIN_ROOT}`); full instructions, depth-scaled loop bounds, and finding handling live in the Phase 4.6 fragment. When no material findings remain (or the loop bound is reached), proceed to Checkpoint 2.
+Before asking for approval, try to break the plan: launch `dp-plan-critic`, one `dp-design-critic` per design red-flag cluster, one `dp-test-critic` per cluster of `skills/tdd-review/references/test-principles.md`, and one `dp-readability-critic` per cluster of `skills/deep-plan/references/readability-principles.md`, per the recipe in `skills/design-review/references/fleet-orchestration.md` (all under `${CLAUDE_PLUGIN_ROOT}`); full instructions, depth-scaled loop bounds, and finding handling live in the Phase 4.6 fragment. When no material findings remain (or the loop bound is reached), proceed to Checkpoint 2.
 
 ### Checkpoint 2 (walk the plan; THE approval gate)
 
@@ -317,7 +316,7 @@ On approval (Checkpoint 2 option 1):
    Then emit EXACTLY this message and stop the turn:
 
    ```
-   Plan approved and written to {plans_dir}/{slug}/plan.md (with research.md, probes.md, and design.md members when present; plans index refreshed at {plans_dir}/README.md).
+   Plan approved and written to {plans_dir}/{slug}/plan.md (with research.md, probes.md, design.md, and architecture.md members when present; plans index refreshed at {plans_dir}/README.md).
 
    Recommended next: run `/compact` (or `/clear` if you do not need any planning context preserved). The lean plan file is the canonical input for implementation; the planning chatter (agent dossiers, perspective drafts, decision option sets) is no longer needed and consumes context.
 

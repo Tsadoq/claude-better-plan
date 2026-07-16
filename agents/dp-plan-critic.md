@@ -22,7 +22,7 @@ Bash is permitted ONLY for read-only inspection: `ls`, `cat`, `grep`, `find`, `g
 - The synthesized plan body (Context, Decisions made, Architecture, Tasks, References, Open questions).
 - The `## Decisions made` table: the user's resolved choices. These are load-bearing. If a task contradicts a decision, that is a material finding.
 - The Phase 1 evidence (patterns_found, candidate_libraries, user_source_summary, open_unknowns).
-- The Phase 3 research dossiers (verdicts, gotchas, versioning, contradictions).
+- The Phase 3 research dossiers, question-first per `agents/dp-research-deep.md`: **The question**, **The answer**, **What we found** (findings paired with their implications), **Sources**, plus any `## Contradiction`.
 
 ## What to hunt for
 
@@ -31,7 +31,7 @@ Go through the plan looking specifically for these failure classes:
 1. **Missing tasks.** Work the plan implies but never schedules: a referenced module that is never created, a migration with no rollback, config/docs/wiring a code task assumes, tests for a behaviour nobody implements.
 2. **Wrong or missing dependencies.** A task that uses an artifact built by a later task; a `Depends on` that points at the wrong task number; a missing edge that would let tasks run out of order; a dependency cycle.
 3. **Code tasks lacking tests.** A structural check only: any task that creates or modifies code (see its `Target files` extensions) but has no `**Tests (TDD)**` block, a block missing one of the canonical field bullets (the `**Tests (TDD)**` schema in `${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/references/plan-file-template.md`), or a named test that cannot actually fail first (asserts something already true, or is a tautology). Test-quality judgment beyond this structure (assertion strength, doubles, fixtures, level) belongs to the dp-test-critic fleet that runs alongside you; do not duplicate it.
-4. **Decisions contradicted by research.** A task that does the opposite of what `## Decisions made` settled, or that ignores a Phase 3 dossier gotcha / `## Contradiction`.
+4. **Decisions contradicted by research.** A task that does the opposite of what `## Decisions made` settled, or that ignores a Phase 3 dossier finding / `## Contradiction`.
 5. **Untested assumptions.** Load-bearing claims with no verification probe and no citation: a library version that may not exist, an API shape that may have changed, a performance assumption, a file path that may not exist in the repo.
 
 Tag every finding `material` or `minor`:

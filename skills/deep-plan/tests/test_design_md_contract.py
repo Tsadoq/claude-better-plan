@@ -19,14 +19,14 @@ TEMPLATE = Path(__file__).resolve().parent.parent / "references" / "design-md-te
 def test_design_template_required_sections() -> None:
     assert TEMPLATE.exists(), f"missing template: {TEMPLATE}"
     text = TEMPLATE.read_text()
+    # The narrative skeleton, in order: title, Background prose, one
+    # question-shaped section per decision (whose body opens with the decision
+    # in its first sentence), and the execute-skill append target last.
     needles = [
-        "# Design rationale",
-        "## Decisions",
-        "### D",
-        "**Chosen**",
-        "**Rejected**",
-        "**Why**",
-        "**Evidence**",
+        "# Design:",
+        "## Background",
+        "## {plain-language question",
+        "first sentence",
         "## Implementation notes",
     ]
     pos = -1
@@ -34,6 +34,18 @@ def test_design_template_required_sections() -> None:
         found = text.find(needle, pos + 1)
         assert found > pos, f"{needle!r} missing or out of order in design-md-template.md"
         pos = found
+
+    assert "readability-principles.md" in text, (
+        "the template must point authors at readability-principles.md's "
+        "Plan-time authoring rules instead of restating them"
+    )
+    assert "punctuation other than hyphens and underscores" in text, (
+        "the template must state the anchor-slug rule plan.md decision rows "
+        "link with (quoted from readability-principles.md)"
+    )
+    assert "**Chosen**" not in text, (
+        "the retired Chosen/Rejected/Why field-block shape must not resurface"
+    )
 
 
 if __name__ == "__main__":

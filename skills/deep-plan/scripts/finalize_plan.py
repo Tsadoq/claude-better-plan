@@ -34,6 +34,7 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Container
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,7 @@ PLAN_FILE_NAME = "plan.md"
 RESEARCH_FILE_NAME = "research.md"
 PROBES_FILE_NAME = "probes.md"
 DESIGN_FILE_NAME = "design.md"
+ARCHITECTURE_FILE_NAME = "architecture.md"
 DRAFT_SUFFIX = "-draft"
 
 # Normative marker literals for generated regions. Content between a
@@ -449,6 +451,82 @@ def split_appendices(text: str) -> tuple[str, str | None, str | None]:
 
 
 # --------------------------------------------------------------------------
+# Readability warnings (never fixes: these two checks only ever add to the
+# report's warnings list and never touch the plan text)
+# --------------------------------------------------------------------------
+
+_H23_HEADING = re.compile(r"^(#{2,3}) (.+?)[ \t]*$", re.MULTILINE)
+_ANY_HEADING = re.compile(r"^#{1,6} (.+?)[ \t]*$", re.MULTILINE)
+_DECISION_DESIGN_LINK = re.compile(r"\]\(design\.md#([A-Za-z0-9_-]+)\)")
+
+
+def warn_dangling_headers(text: str, exempt: Container[str] = frozenset()) -> list[str]:
+    """Warn per H2/H3 heading with no body before the next heading of the
+    same or higher level.
+
+    A parent heading immediately followed by its own subheading is not
+    dangling: the subheading (and everything under it) is the parent's body.
+    `exempt` lists full heading lines the caller knows are legitimately
+    empty (the generated `## Task overview`, design.md's plan-time
+    `## Implementation notes`).
+    """
+    matches = list(_H23_HEADING.finditer(text))
+    warnings: list[str] = []
+    for i, m in enumerate(matches):
+        heading = f"{m.group(1)} {m.group(2)}"
+        if heading in exempt:
+            continue
+        body_end = len(text)
+        for nxt in matches[i + 1 :]:
+            if len(nxt.group(1)) <= len(m.group(1)):
+                body_end = nxt.start()
+                break
+        if not text[m.end() : body_end].strip():
+            warnings.append(f"dangling section: {heading} has no body")
+    return warnings
+
+
+def github_slug(heading: str) -> str:
+    """Slugify a heading per the rule stated in readability-principles.md:
+    lowercase, spaces to hyphens, punctuation other than hyphens and
+    underscores stripped ("When does a plan deserve an architecture.md?"
+    becomes "when-does-a-plan-deserve-an-architecturemd").
+    """
+    stripped = re.sub(r"[^\w\s-]", "", heading.strip().lower())
+    return re.sub(r"\s+", "-", stripped.strip())
+
+
+def warn_unresolved_decision_links(plan_text: str, design_text: str) -> list[str]:
+    """Warn per `design.md#anchor` link in `## Decisions made` that matches
+    no heading of the sibling design.md (headings slugified via
+    `github_slug`, the same rule design-md-template.md states for authors).
+    """
+    anchors = {github_slug(m.group(1)) for m in _ANY_HEADING.finditer(design_text)}
+    warnings: list[str] = []
+    for m in _DECISION_DESIGN_LINK.finditer(_section_body(plan_text, "## Decisions made")):
+        if m.group(1) not in anchors:
+            warnings.append(
+                f"decisions-index link design.md#{m.group(1)} matches no design.md heading"
+            )
+    return warnings
+
+
+def _readability_warnings(plan_text: str, plan: Path) -> list[str]:
+    """The warning-only readability pass shared by cmd_repair and
+    cmd_archive. The sibling design.md is discovered by path convention
+    (`plan.parent / DESIGN_FILE_NAME`); when absent, the link check is off
+    entirely, so legacy flat plans gain no warnings.
+    """
+    warnings = warn_dangling_headers(plan_text, exempt={"## Task overview"})
+    design = plan.parent / DESIGN_FILE_NAME
+    if design.exists():
+        design_text = design.read_text()
+        warnings += warn_dangling_headers(design_text, exempt={"## Implementation notes"})
+        warnings += warn_unresolved_decision_links(plan_text, design_text)
+    return warnings
+
+
+# --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
 
@@ -457,6 +535,7 @@ def cmd_repair(plan: Path) -> dict[str, Any]:
         return {"ok": False, "fixes": [], "warnings": [f"plan file not found: {plan}"]}
     repaired, report = repair(plan.read_text())
     plan.write_text(repaired)
+    report["warnings"] += _readability_warnings(repaired, plan)
     report["plan"] = str(plan)
     return report
 
@@ -484,6 +563,7 @@ def cmd_archive(plan: Path, plans_dir: Path, slug: str) -> dict[str, Any]:
     if not plan.exists():
         return {"ok": False, "warnings": [f"plan file not found: {plan}"]}
     repaired, report = repair(plan.read_text())
+    report["warnings"] += _readability_warnings(repaired, plan)
     lean, probes, research = split_appendices(repaired)
     lean = stamp_status_date(lean, "approved", date.today().isoformat())
 
