@@ -6,7 +6,7 @@ description: |
   an AskUserQuestion with 3 to 5 options, runs targeted deep web research per
   chosen option, and produces an AI-consumable plan file with TDD-embedded
   tasks. Triggers on the slash command /deep-plan only.
-argument-hint: "[slug:my-slug] [depth: shallow|standard|exhaustive]"
+argument-hint: "[slug:my-slug]"
 disable-model-invocation: true
 allowed-tools:
   - Agent
@@ -72,10 +72,12 @@ permission-checked per segment (the Phase 4.2 rename prefixes `mv` with two
 The subagents are NOT held read-only by `permissionMode` (the harness ignores
 `permissionMode`, `hooks`, and `mcpServers` on plugin-bundled agents). They are
 read-only because each `dp-*` agent declares a `disallowedTools` list that blocks
-`Write`, `Edit`, and `NotebookEdit`, reinforced by a read-only system prompt; the
+`Write`, `Edit`, and `NotebookEdit`, reinforced by a read-only system prompt.
+`dp-implement-task` is the one exception: it exists to write code at execute time, and
+is bounded by the dispatcher's scope audit and its `Workflow` denial instead. The
 research agents and the critic-fleet leaves also disallow `Bash` (no shell write
-vector), while `dp-explore-codebase`, `dp-plan-perspective`, and `dp-plan-critic`
-keep `Bash` for read-only inspection -- a residual vector mitigated by the prompt
+vector), while `dp-explore-codebase`
+keeps `Bash` for read-only inspection -- a residual vector mitigated by the prompt
 and the trusted-session model. Dropping the `tools` allowlist for
 `disallowedTools` is also what lets the agents reach any ambient MCP documentation
 tools during research.
@@ -90,7 +92,7 @@ Checkpoint 2's `AskUserQuestion` is the ONLY approval mechanism for the plan. Ne
 ## Anti-patterns
 
 - Silently picking between meaningful options because they all seem reasonable. Always surface via `AskUserQuestion`.
-- Generating options inside a subagent (latency hurts; subagents cannot delegate further).
+- Generating options inside a subagent (a latency choice, not a limit: nested agents do work).
 - Batching multiple decisions into one `AskUserQuestion` with multi-select. Decisions are conditional; batched questions encourage skimming.
 - Writing `## Decisions made` rows before the corresponding `AskUserQuestion` resolves.
 - Writing the plan file in Phase 1. The draft is born at Phase 2's first decision, not before.
@@ -120,22 +122,11 @@ flowchart TD
 
 ## Phase 0: Bootstrap
 
-**Parse `$ARGUMENTS` first.** The harness has no native `key:value` flag parser, so extract two optional tokens from `$ARGUMENTS` yourself:
+**Parse `$ARGUMENTS` first.** The harness has no native `key:value` flag parser, so extract one optional token from `$ARGUMENTS` yourself:
 
 - `slug:<value>` -- an explicit archive-slug hint. If absent, derive the slug from the topic in Phase 4.
-- `depth:<shallow|standard|exhaustive>` -- how hard to work. Default to `standard` when absent or unrecognised.
 
-Everything in `$ARGUMENTS` that is not one of those tokens is the planning topic. Fix `depth` once here; every later phase reads its caps from the Depth scaling table below, and you map `depth` to the native `effort` field as that table specifies.
-
-### Depth scaling
-
-| Aspect | shallow | standard (default) | exhaustive |
-|--------|---------|--------------------|------------|
-| Phase 1 fan-out | explore + shallow only (source-ingest still runs if the user supplied sources) | explore + shallow (+ source-ingest when sources exist) | same as standard, may re-run on weak evidence |
-| Phase 3 deep research | skip entirely | one `dp-research-deep` per decision, cap 4, waves of 4 | multiple waves, never skip when any novelty exists |
-| Phase 4 perspectives | 1 picked + deep-modules | 1 to 3 picked + deep-modules | 3 picked + deep-modules |
-| Phase 4.6 critique | 1 quick pass, no loop | 1 pass, loop once on material findings | loop until no material findings (cap 3 rounds) |
-| `effort` | low to medium | inherit | high to xhigh |
+Everything else in `$ARGUMENTS` is the planning topic. There is one mode: each phase states its own absolute fan-out and loop bound at its call site, and every agent launch passes `effort: inherit`.
 
 Then proceed:
 
@@ -250,13 +241,13 @@ Construct the slug from `{user_intent_keywords, top_2_decision_choices}` (`[a-z0
 
 The single fail-closed rename point: a double-guarded rename moves the draft folder to its slug name, then `setup_session.py` records the new path (exact commands and permission notes in the Phase 4 fragment). If a guard trips, follow R3 -- never a bare `mv`. From here on every plan write edits `plans_dir/<slug>/plan.md` in place; it is the single canonical plan file.
 
-### 4.3 Perspective fan-out
+### 4.3 Synthesis lenses
 
-Launch 2 to 4 `dp-plan-perspective` agents (inherit) in parallel: always one carrying the `deep-modules` perspective, plus 1 to 3 picked from `{simplicity, performance, maintainability, minimal-diff, security}` based on the user's evident priorities (see `references/perspectives.md`).
+Walk the `## Synthesis checklist` of `references/perspectives.md` yourself, in this turn: draft the tasks once, then sweep lens by lens, always ending with `deep-modules`. No agents.
 
 ### 4.4 Synthesis
 
-Merge perspectives into a single plan body using `references/plan-file-template.md` as the skeleton, editing `plans_dir/<slug>/plan.md` in place over the draft-seeded sections. Include the `**Tests (TDD)**` subsection only for tasks that produce or modify code, carrying the template's full field schema per code task and applying `## Plan-time authoring rules` of `${CLAUDE_PLUGIN_ROOT}/skills/tdd-review/references/test-principles.md`; omit the subsection entirely for tasks whose output is markdown, docs, or config. Append the Phase 3 research dossiers verbatim under a `## Research dossiers` appendix, opening it with the template's `### Coverage` table (one row per decision), so they survive into the archived folder members.
+Write the swept plan body using `references/plan-file-template.md` as the skeleton, editing `plans_dir/<slug>/plan.md` in place over the draft-seeded sections. Include the `**Tests (TDD)**` subsection only for tasks that produce or modify code, carrying the template's full field schema per code task and applying `## Plan-time authoring rules` of `${CLAUDE_PLUGIN_ROOT}/skills/tdd-review/references/test-principles.md`; omit the subsection entirely for tasks whose output is markdown, docs, or config. Append the Phase 3 research dossiers verbatim under a `## Research dossiers` appendix, opening it with the template's `### Coverage` table (one row per decision), so they survive into the archived folder members.
 
 **Seed design.md**: in the same sub-step, write `<plans_dir>/<slug>/design.md` per the narrative `references/design-md-template.md` (Background, then one question-shaped section per decision row, linked from that row's Rationale cell; `## Implementation notes` starts empty for the execute skill's per-task appends).
 
@@ -264,8 +255,8 @@ Merge perspectives into a single plan body using `references/plan-file-template.
 
 **Merge rules**:
 
-- Perspectives disagree on task ordering or test scope: prefer the union (additive).
-- Perspectives disagree on architectural choice: a sub-decision was missed, loop back to Phase 2.
+- Two lenses pull opposite ways on task ordering or test scope: prefer the union (additive).
+- Two lenses pull opposite ways on an architectural choice: a sub-decision was missed, loop back to Phase 2.
 
 ### 4.5 Verification probes
 
@@ -273,7 +264,9 @@ Run inline `Bash` probes against design assumptions (sequentially, fixtures unde
 
 ## Phase 4.6: Adversarial critique
 
-Before asking for approval, try to break the plan: launch `dp-plan-critic`, one `dp-design-critic` per design red-flag cluster, one `dp-test-critic` per cluster of `skills/tdd-review/references/test-principles.md`, and one `dp-readability-critic` per cluster of `skills/deep-plan/references/readability-principles.md`, per the recipe in `skills/design-review/references/fleet-orchestration.md` (all under `${CLAUDE_PLUGIN_ROOT}`); full instructions, depth-scaled loop bounds, and finding handling live in the Phase 4.6 fragment. When no material findings remain (or the loop bound is reached), proceed to Checkpoint 2.
+Before asking for approval, try to break the plan: launch one `dp-design-critic` per design red-flag cluster, one `dp-test-critic` per cluster of `skills/tdd-review/references/test-principles.md`, and one `dp-readability-critic` per cluster of both `readability-principles.md` and `plan-integrity-principles.md` under `skills/deep-plan/references/`. All per the recipe in `skills/design-review/references/fleet-orchestration.md` (paths under `${CLAUDE_PLUGIN_ROOT}`); full instructions and finding handling live in the Phase 4.6 fragment. The bound is absolute: one pass, loop once on material findings.
+
+Arm each fleet from its signal, then pass the armed clusters through the recipe's `## Triage gate`: a code task with a missing or weak `**Tests (TDD)**` block arms the test fleet; a new module, boundary, or interface in any `Change` block arms the design fleet; a new or rewritten `design.md` or `architecture.md` section arms the readability and plan-integrity clusters. A plan arming nothing launches no critics -- say so in one sentence and go to Checkpoint 2. Otherwise proceed to Checkpoint 2 once no material findings remain or the re-run is spent.
 
 ### Checkpoint 2 (walk the plan; THE approval gate)
 

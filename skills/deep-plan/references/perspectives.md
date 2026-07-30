@@ -1,8 +1,23 @@
-# dp-plan-perspective catalogue
+# Plan synthesis lenses
 
-The perspective fan-out in Phase 4 picks 1 to 3 priority perspectives from the catalogue below based on the user's evident priorities, and always launches `deep-modules` in addition (total fan-out 2 to 4). Each perspective drafts a `## Tasks` block that the orchestrator merges. Every perspective's `**Tests (TDD)**` blocks follow `## Plan-time authoring rules` of `${CLAUDE_PLUGIN_ROOT}/skills/tdd-review/references/test-principles.md`, whatever the perspective's frame.
+Six frames for reading a draft `## Tasks` block. They are not separate drafts to merge — Phase 4.3 sweeps them one at a time inside the single synthesis turn, so a lens costs a pass of attention rather than an agent.
 
-## Perspectives
+## Synthesis checklist
+
+Draft the `## Tasks` block once, then sweep it lens by lens, amending in place. One pass per lens, in this order:
+
+1. `simplicity` — is any task building more than the evidence demands?
+2. `performance` — does any task sit on a hot path with no latency budget stated?
+3. `maintainability` — will a reader six months out understand why each task exists?
+4. `minimal-diff` — does any task touch a file no other task needed?
+5. `security` — does any task cross a trust boundary without validating it?
+6. `deep-modules` — always swept last, because it reshapes task boundaries rather than task contents.
+
+Each lens's full frame is in `## The lenses` below; read the frame before sweeping with it. Emphasis is not uniform: `## Which lenses to emphasise` says which frames deserve real scrutiny for a given change, and which get a quick look. Every lens still gets its pass.
+
+`**Tests (TDD)**` blocks follow `## Plan-time authoring rules` of `${CLAUDE_PLUGIN_ROOT}/skills/tdd-review/references/test-principles.md`, whatever lens is being applied.
+
+## The lenses
 
 ### simplicity
 
@@ -48,18 +63,27 @@ Anti-pattern this guards against: a feature that ships secure-by-accident and br
 
 Frame: apply the `## Plan-time principles` section of `${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/design-principles.md` (read it before drafting). Prefer deep modules: small interfaces hiding real functionality. Pull complexity downward rather than exporting knobs and caller obligations. Define errors out of existence where semantics allow. Slice tasks along module boundaries so each increment delivers a whole abstraction.
 
-Use when: always. This perspective is not picked; it launches on every fan-out in addition to the 1 to 3 picked perspectives.
+Use when: always, and swept last. This lens is never deprioritised, because it changes where task boundaries fall rather than what a task contains.
 
 Anti-pattern this guards against: a plan whose tasks each work in isolation but compose into shallow wrappers, leaked formats, and pass-through layers nobody designed on purpose.
 
-## How to choose
+## Which lenses to emphasise
 
-The orchestrator reads the user's prompt and the resolved decisions, then picks 1 to 3 priority perspectives; `deep-modules` always launches in addition, so the total fan-out is 2 to 4. Examples (picked perspectives only; deep-modules is implicit in each):
+Every lens gets a pass, but attention is finite. Read the user's prompt and the resolved decisions, then give 1 to 3 lenses real scrutiny and the rest a quick look. Examples (emphasised lenses only; `deep-modules` is always swept in addition):
 
-- "Add a rate limiter" -> performance + security + simplicity (3-way).
-- "Rename a private helper" -> minimal-diff (1-way; nothing else applies).
-- "Refactor auth middleware" -> security + maintainability (2-way).
-- "Add a /healthz endpoint" -> simplicity + maintainability (2-way).
-- "Migrate DB" -> minimal-diff + maintainability (2-way).
+- "Add a rate limiter" -> performance + security + simplicity.
+- "Rename a private helper" -> minimal-diff; nothing else has much to say.
+- "Refactor auth middleware" -> security + maintainability.
+- "Add a /healthz endpoint" -> simplicity + maintainability.
+- "Migrate DB" -> minimal-diff + maintainability.
 
-Cap is 3 picked (4 total with deep-modules). Beyond that, perspectives start contradicting each other in ways the orchestrator cannot reconcile without surfacing a sub-decision back to the user, which is Phase 2's job. deep-modules does not count against the cap: it constrains module shape rather than competing on priorities.
+Emphasise at most 3. Past that the lenses start pulling in opposite directions, and reconciling them means surfacing a sub-decision back to the user, which is Phase 2's job rather than Phase 4's. `deep-modules` never counts against the 3: it constrains module shape instead of competing on priorities.
+
+## How to update these guidelines
+
+Two contract tests pin this file; both must stay green after any edit here:
+
+- `skills/tdd-review/tests/test_test_principles_contract.py` — pins `## Synthesis checklist`, all six lens names, this registry section, and the pointer to the tdd-review authoring rubric.
+- `skills/design-review/tests/test_design_review_contract.py` — pins that the `deep-modules` lens points at `design-principles.md`.
+
+Renaming a lens means editing both tests and Phase 4.3 of `skills/deep-plan/SKILL.md`, which names the lens set.

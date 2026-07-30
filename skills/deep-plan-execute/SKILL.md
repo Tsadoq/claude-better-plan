@@ -6,8 +6,9 @@ description: |
   blocks, located when no path is given through the approved-plan memo
   recorded at approval. Parses
   the plan's ## Tasks into harness tasks (one TaskCreate each), wires
-  Depends on into addBlockedBy, then drives a test-first implementation
-  loop task by task in dependency order. Invoke after a /deep-plan plan is
+  Depends on into addBlockedBy, then dispatches each task in dependency
+  order to one writable dp-implement-task agent and audits its scope.
+  Invoke after a /deep-plan plan is
   approved and you are ready to build it, e.g. "implement the plan" or
   "/deep-plan:deep-plan-execute <plan-file>". Not for executing plans
   produced outside /deep-plan.
@@ -16,11 +17,11 @@ argument-hint: "[plan-path (plan.md file or plan folder)]"
 
 # /deep-plan:deep-plan-execute
 
-You are the implementation driver for a plan produced by `/deep-plan`. Your job
-is to turn the plan's `## Tasks` block into real harness tasks with dependencies
-and then implement them test-first, one at a time, in dependency order. The plan
-file is the contract; do not redesign it. If you disagree with a task, surface it
-to the user rather than silently deviating.
+You are the dispatcher for a plan produced by `/deep-plan`. Your job is to turn the
+plan's `## Tasks` block into real harness tasks with dependencies, then dispatch
+each one to a writable implementer agent in dependency order and audit what it
+changed. The plan file is the contract; do not redesign it. If you disagree with a
+task, surface it to the user rather than silently deviating.
 
 **Requires Claude Code >= v2.1.142** for the Task dependency API (`TaskUpdate`
 `addBlockedBy`). If `TaskCreate`/`TaskUpdate` are unavailable, fall back to a flat
@@ -111,60 +112,113 @@ Only `addBlockedBy` is relied on here; it is the confirmed field. If a
 `depends_on` integer has no entry in the map (dangling reference), skip it and
 warn the user rather than failing.
 
-## Step 5: Implement test-first, in dependency order
+## Preflight: warn about inherited permissions once
+
+Subagents **inherit** the parent session's permission mode, and plugin-bundled
+agents cannot set `permissionMode` (the harness ignores it, along with `hooks` and
+`mcpServers`). So in default mode every `Write`, `Edit`, and `Bash` call inside
+every implementer raises its own approval prompt -- dozens per task, and the user
+is answering them for work they cannot see.
+
+Before the first dispatch, tell the user this once, in one or two sentences. Name
+the durable fix: a project-local `.claude/settings.json` allowlist covering the
+tools the plan's tasks actually need. Offer to stop so they can add it. Then
+proceed with whatever they choose -- a noisy run is their call to accept.
+
+Never suggest a permission-bypass flag as the workaround. Not as a shortcut, not
+as an aside, not even if the prompting is severe.
+
+Two related bounds, so nobody looks for a shipped control that does not exist:
+
+- Restricting which agent types the implementer may spawn needs a **user-side**
+  `permissions.deny` rule. The parenthesised `Agent(type)` allowlist form is
+  silently ignored inside a subagent definition, and plugins cannot ship
+  permissions at all.
+- What this plugin *does* ship is the `Workflow` denial in the agent's frontmatter
+  plus the dispatcher's scope audit in Step 5. That is the whole enforcement
+  surface; the rest is the trusted-session model.
+
+## Step 5: Dispatch each task, then audit its scope
+
+You do not implement tasks. One `dp-implement-task` agent implements each one in a
+fresh context that is discarded on return, so the diff, the test output, and the
+critic findings never enter your context at all. You own the task graph, the
+dispatch order, and the scope audit.
 
 Process tasks in topological order (a task runs only after every task it is
-blocked by is done). For each task, mark it `in_progress` via `TaskUpdate`,
-capture a baseline ref for the design review in step 4 (`git stash create`;
-empty output means the tree is clean, use `HEAD`), then:
+blocked by is done). For each task, six moves:
 
-1. **If the task has a `tests` block (code task):** write the test described in
-   `tests` FIRST. Quote `## Execute-time run rules` of
-   `${CLAUDE_PLUGIN_ROOT}/skills/tdd-review/references/test-principles.md` and
-   `## Execute-time craft rules` of
-   `${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/design-principles.md`
-   into the implementation turn alongside the task description; they govern how
-   the test and the code are written. Run the `verification` command and
-   confirm it FAILS (red). If it passes before you have written any
-   implementation, the test is wrong or the behaviour already exists -- stop
-   and tell the user.
-2. **Implement** the `change` against the `target_files`. Touch only what the
-   task names; other tasks own the rest.
-3. **Run the `verification` command.** For a code task it must now pass (green).
-   For a docs/config task (no `tests` block) the verification command is the
-   acceptance check; run it and confirm it passes.
-4. **Design-review the task's diff.** Collect the diff of THIS task only, not
-   the accumulated run: the loop never commits between tasks, so a plain
-   `git diff` would re-review earlier tasks' edits to shared files. Diff the
-   baseline ref against the worktree, scoped to the task's `Target files`
-   (`git diff <baseline> -- <target files>`), and pass the diff as text
-   because the critics have no Bash. Run the design fleet on it per
-   `${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/fleet-orchestration.md`
-   (one `dp-design-critic` per red-flag cluster, then the verify stage), and
-   run the same recipe with `agentType: deep-plan:dp-test-critic` on the same
-   task-scoped diff (one finder per `## Review-time red flags` cluster of
-   `${CLAUDE_PLUGIN_ROOT}/skills/tdd-review/references/test-principles.md`).
-   Fix `material` findings within the task and re-run the `verification`
-   command before completing; log `minor` findings in the task completion
-   note without blocking. After first green and after any review fixes,
-   re-run the task's `verification` command once more; treat a second-run
-   failure as a stability finding that blocks completion until the flake is
-   understood and fixed. This is the loop's enforcement of the `Re-run
-   after green` run rule in test-principles.md.
-5. **Record the implementation note (MANDATORY for folder plans).** After
-   verification passes and before the task is marked completed: append one
-   terse `### Task {N}: {name}` entry (2 to 4 lines: deviations from the plan,
-   gotchas hit, non-obvious code shapes) under `## Implementation notes` in
-   the plan folder's sibling `design.md`. If a crashed or hand-made folder
-   lacks `design.md`, create it first from
-   `${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/references/design-md-template.md`.
-   Legacy flat plans (no folder) skip this append.
-6. On green, mark the task `completed` via `TaskUpdate`. On red you cannot fix
-   within the task's scope, stop and report rather than expanding scope.
+1. **Mark it `in_progress`** via `TaskUpdate`.
+2. **Capture the baseline ref**: `git stash create`. Empty output means the tree
+   is clean, so use `HEAD`.
+3. **Snapshot pre-existing untracked paths**:
 
-Run verification commands exactly as written in the plan. If a command assumes
-`uv run` but the project has no `pyproject.toml`, fall back to `python3` and note
-the substitution.
+   ```
+   git ls-files --others --exclude-standard
+   ```
+
+   Keep this list. Without it the audit in move 5 would blame the task for every
+   scratch file already sitting in the user's tree.
+4. **Launch exactly one `deep-plan:dp-implement-task`**, passing only four
+   scalars: the plan path, the task number, the baseline ref, and `fleet_mode`
+   (see `## Subagent budget`). Do not re-type the task's fields into the prompt --
+   the agent fetches its own task body with `load_tasks.py --task <n>`, which
+   keeps plan grammar owned by one function. Then read its six-line summary. That
+   summary is all you get, and all you need.
+5. **Audit the task's scope.** Build the task-attributable path set:
+
+   ```
+   git diff --name-only <baseline>
+   git ls-files --others --exclude-standard
+   ```
+
+   The set is the union of those two, MINUS the move-3 snapshot. Both halves are
+   required: a plain diff omits files the task newly created, while a bare
+   untracked listing would wrongly attribute pre-existing scratch files.
+
+   Compare that set against the task's `Target files`. The plan folder's own
+   `design.md` is always in scope, since the agent's implementation note targets
+   it. If any path remains outside, do NOT complete the task: report the
+   offending paths to the user and stop. Never auto-revert -- the edit may be
+   correct and the plan wrong, and that is the user's call.
+6. **Complete or block.** With a clean audit and a `status: done` summary, mark
+   the task `completed`. On `status: blocked`, or a failed audit, stop and report
+   rather than expanding scope or re-dispatching blindly.
+
+The agent owns everything inside the increment: the failing test first, the red
+and green runs, the execute-time run and craft rules, the task-scoped diff, its
+own nested design and test critic fleets, the material-finding fixes, the
+stability re-run, and the `design.md` note append. All of it is specified in
+`agents/dp-implement-task.md`; do not restate it here and do not do it yourself.
+
+Verification commands run exactly as the plan writes them. If one assumes `uv run`
+but the project has no `pyproject.toml`, the fallback is `python3` and the
+substitution is reported in the summary's `deviations` line.
+
+## Subagent budget
+
+Delegation spends subagents, and the caps count nested children. They live in
+`${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/fleet-orchestration.md`
+under `## Session agent budget`: **200 subagents** per session and 20 concurrent.
+
+Do the arithmetic honestly. One implementer plus 8 finders is 9 agents per task at
+minimum, but the fleet's verify stage launches one agent per surviving deduped
+finding and is uncapped, so a task with many findings can pass 20. The per-task
+figure is a **range of 9 to roughly 20**, not a fixed 12 -- so derive thresholds
+from the top of the range, never the bottom.
+
+Pick `fleet_mode` from the parsed task count before the first dispatch:
+
+| Tasks | `fleet_mode` | What the implementer runs |
+|-------|--------------|---------------------------|
+| up to 8 | `full` | both nested fleets, all clusters |
+| 9 to 16 | `design-only` | the four design clusters as a fleet; tests reviewed inline |
+| more than 16 | `inline` | no nested fleet; the implementer reviews its own diff |
+
+Announce the chosen mode and its reason in one sentence before dispatching the
+first task. If a blocked task forces a re-dispatch, that consumes budget the
+table did not price: re-announce the mode, downgrading it when the remaining
+task count no longer fits.
 
 ## Step 6: Completion (folder plans only)
 
@@ -194,3 +248,6 @@ the README index.
 - Marking a task completed with unresolved material design findings.
 - Marking a task completed without the post-green stability re-run.
 - Marking a task completed without its design.md implementation note (folder plans).
+- Implementing a task in the dispatcher context instead of dispatching it.
+- Marking a task completed with an unaudited diff.
+- Reading a diff in the orchestrator; the whole point is that it stays below.

@@ -17,10 +17,9 @@ Long-form per-phase prompts the orchestrator quotes into context as needed. The 
 ```
 You are at the start of /deep-plan. Before doing anything else:
 
-0. Parse $ARGUMENTS for the optional `slug:<value>` and `depth:<shallow|standard|exhaustive>`
-   tokens (there is no native key:value parser). Default depth=standard. The rest of
-   $ARGUMENTS is the topic. Every per-phase cap below is read from the "Depth scaling" table
-   in SKILL.md; where a fragment gives a number, treat it as the standard-depth value.
+0. Parse $ARGUMENTS for the optional `slug:<value>` token (there is no native key:value
+   parser). The rest of $ARGUMENTS is the topic. There is one mode: where a fragment
+   below gives a number, that number is the bound. Every agent launch is effort: inherit.
 
 1. Check the most recent system reminder. If it contains "Plan mode is active.", print one
    sentence asking the user to toggle plan mode off (Shift+Tab) and stop the turn. This
@@ -74,8 +73,7 @@ You are at the start of /deep-plan. Before doing anything else:
 
 ```
 Goal: build a shared evidence base from three independent angles before any decision
-is taken. Launch up to three subagents in a single message (fan-out scales by depth per
-the SKILL.md Depth scaling table; shallow runs explore + shallow only):
+is taken. Launch up to three subagents in a single message:
 
 - dp-explore-codebase  (haiku, always)
 - dp-research-shallow  (haiku, always)
@@ -165,11 +163,9 @@ citations.
 
 Launch one dp-research-deep agent per decision branch IN PARALLEL in a single message.
 Cap at 4 parallel instances. If more than 4 decisions need research, batch in waves of 4.
-Depth scales this (SKILL.md table): shallow skips Phase 3 entirely; exhaustive runs
-multiple waves and does not skip while any novelty remains.
 
-Skip Phase 3 entirely if all Phase 2 decisions selected the obvious "follows existing
-convention" option (no novel libraries to research), or whenever depth=shallow.
+Skip Phase 3 entirely only if all Phase 2 decisions selected the obvious "follows existing
+convention" option, meaning no novel libraries to research.
 
 Inputs to each agent:
 - decision: short name from Phase 2
@@ -213,11 +209,10 @@ Sub-steps in order:
    From here on every plan write edits plans_dir/<slug>/plan.md in place. It is the
    single canonical plan file; there is no mirror.
 
-3. Perspective fan-out: launch dp-plan-perspective agents in parallel. One instance
-   always carries the deep-modules perspective; the picked count scales by depth
-   (SKILL.md table): shallow=1, standard=1 to 3, exhaustive=3, each picked from
-   {simplicity, performance, maintainability, minimal-diff, security} per the user's
-   evident priorities. See references/perspectives.md for selection heuristics.
+3. Synthesis lenses: launch no agents. Walk the ## Synthesis checklist of
+   references/perspectives.md in this turn -- draft the tasks once, then sweep lens by
+   lens, giving 1 to 3 lenses real scrutiny per the user's evident priorities and
+   always ending with deep-modules, which reshapes task boundaries.
 
 4. Synthesis: merge perspectives into a single plan body using
    references/plan-file-template.md as the skeleton, editing plans_dir/<slug>/plan.md
@@ -261,11 +256,16 @@ After all sub-steps, proceed to Phase 4.6 (adversarial critique) before Checkpoi
 ```
 Goal: try to refute the synthesized plan before the user is asked to approve it.
 
-Launch one dp-plan-critic (inherit) with: the synthesized plan body, the ## Decisions made
-table, the Phase 1 evidence, and the Phase 3 dossiers. It returns findings under
-## Missing tasks, ## Wrong or missing dependencies, ## Code tasks lacking tests,
-## Decisions contradicted by research, and ## Untested assumptions, each tagged
-material|minor, plus a one-line ## Verdict.
+First arm the fleets. Each is launched only if its signal is present in the plan:
+- test fleet:        a code task with a missing or weak **Tests (TDD)** block.
+- design fleet:      a new module, boundary, or interface in any Change block.
+- readability fleet: a new or rewritten design.md or architecture.md section.
+- plan-integrity:    the same signal as readability.
+If nothing is armed, launch no critics: tell the user in one sentence and go straight
+to Checkpoint 2. Every armed fleet then passes its clusters through the recipe's
+## Triage gate, which drops the clusters with nothing to find before any finder runs.
+Neither this fragment nor SKILL.md restates the session caps; see the recipe's
+## Session agent budget.
 
 In the same launch message, run the design fleet per
 ${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/fleet-orchestration.md: one
@@ -279,20 +279,29 @@ every task's **Tests (TDD)** block. And run it once more with agentType
 deep-plan:dp-readability-critic: one finder per H3 cluster of ## Review-time red
 flags in ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/references/readability-principles.md,
 reviewing plan.md, design.md, and architecture.md when present as documents.
-Design, test, and readability findings carry the same material|minor tags, merge
-into the handling below, and share the depth loop bounds; no separate knobs.
+Run that same leaf once more over
+${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/references/plan-integrity-principles.md,
+whose ### Plan integrity cluster carries the structural checks the retired
+standalone plan critic owned: work never scheduled, a wrong or cyclic Depends on,
+a code task with no **Tests (TDD)** block, a task contradicting ## Decisions made
+or a dossier, and a load-bearing claim with neither probe nor citation. Give it the
+plan body, the ## Decisions made table, the Phase 1 evidence and the Phase 3
+dossiers as its review target -- those dossiers are question-first per
+agents/dp-research-deep.md (**The question**, **The answer**, **What we found**,
+**Sources**, plus any ## Contradiction), so cite a dossier by section, not by page.
+No new agent type: that leaf's whole rubric is
+caller-supplied, which is why a second cluster source needs only a second run.
+Design, test, readability and plan-integrity findings carry the same material|minor
+tags, merge into the handling below, and share one loop bound; no separate knobs.
 
-Count and loop bound scale by depth (SKILL.md Depth scaling table):
-- shallow:    one quick pass, no loop.
-- standard:   one pass, loop back at most once if material findings remain.
-- exhaustive: re-run until a pass has no material findings, capped at 3 rounds.
+The bound is absolute: one pass, loop once on material findings.
 
 Act on findings:
 - Material finding that reverses a user decision -> loop back to Phase 2 for that decision,
   quoting the critic's contradiction in the new AskUserQuestion. Never reverse it silently.
 - Other material findings -> fix inline in the plan body (add the missing task, fix
   **Depends on**, add the missing **Tests (TDD)** block, add a verification probe), then
-  re-run the critic if the depth loop bound allows.
+  re-run the critic once if that re-run is still unspent.
 - Minor findings -> append to ## Open questions (kept genuinely deferrable, since a
   non-empty ## Open questions blocks /deep-plan:deep-plan-execute later).
 
