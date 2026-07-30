@@ -76,6 +76,31 @@ def test_parses_golden_plan_tasks_and_deps() -> None:
     assert not t2["tests"], "task 2 (docs) should have no Tests block"
 
 
+def test_task_selector_returns_only_the_requested_task() -> None:
+    # The dispatcher hands a task number to the implementer subagent, which
+    # fetches its own task body rather than being fed re-typed plan fields.
+    code, payload = _run_main(["--plan", str(GOLDEN), "--task", "2"])
+    assert code == 0, f"--task 2 should exit 0, got {code}: {payload}"
+
+    task = payload.get("task")
+    assert task is not None, f"payload must carry a 'task' key, got keys {sorted(payload)}"
+    assert task["n"] == 2, f"selector returned task {task['n']}, expected 2"
+
+    missing = [k for k in ("target_files", "change", "verification", "depends_on") if k not in task]
+    assert not missing, f"selected task dropped fields {missing}"
+
+    assert "tasks" not in payload, (
+        "selector must return one task only; payload still carries the full 'tasks' list"
+    )
+
+
+def test_task_selector_reports_a_missing_task() -> None:
+    code, payload = _run_main(["--plan", str(GOLDEN), "--task", "99"])
+    assert code != 0, f"an absent task number must exit non-zero, got {code}"
+    assert payload["ok"] is False, f"expected ok=False, got {payload}"
+    assert "99" in payload["error"], f"error must name the missing task number: {payload['error']}"
+
+
 def test_malformed_depends_on_degrades_to_empty() -> None:
     assert load_tasks.parse_depends_on("none") == []
     assert load_tasks.parse_depends_on("1") == [1]

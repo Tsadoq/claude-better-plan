@@ -21,7 +21,6 @@ FLEET_ORCHESTRATION = ROOT / "skills" / "design-review" / "references" / "fleet-
 DESIGN_REVIEW_SKILL = ROOT / "skills" / "design-review" / "SKILL.md"
 DEEP_PLAN_SKILL = ROOT / "skills" / "deep-plan" / "SKILL.md"
 PERSPECTIVES = ROOT / "skills" / "deep-plan" / "references" / "perspectives.md"
-PERSPECTIVE_AGENT = ROOT / "agents" / "dp-plan-perspective.md"
 PHASE_PROMPTS = ROOT / "skills" / "deep-plan" / "references" / "phase-prompts.md"
 EXECUTE_SKILL = ROOT / "skills" / "deep-plan-execute" / "SKILL.md"
 
@@ -100,6 +99,28 @@ def test_fleet_recipe_is_critic_parametric() -> None:
         )
 
 
+def test_fleet_recipe_owns_triage_nesting_and_budget() -> None:
+    # Fleet mechanics live in one file. Callers state a target and quote the
+    # recipe; they never restate a cap, a gate, or a nesting rule themselves.
+    text = FLEET_ORCHESTRATION.read_text()
+
+    for heading in ("## Triage gate", "## Nested fleets", "## Session agent budget"):
+        assert heading in text, f"fleet-orchestration.md missing section {heading!r}"
+
+    assert "run_in_background: false" in text, (
+        "the nested-fleets section must state the foreground requirement literally: "
+        "a backgrounded subagent fleet returns an acknowledgement, not findings"
+    )
+    assert "CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION" in text, (
+        "the session-budget section must name the cap's env var so a caller can raise it"
+    )
+
+    for path in (DEEP_PLAN_SKILL, PHASE_PROMPTS):
+        assert "CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION" not in path.read_text(), (
+            f"{path.name} restates the session cap; it belongs only in fleet-orchestration.md"
+        )
+
+
 def test_design_review_skill_contract() -> None:
     assert DESIGN_REVIEW_SKILL.exists(), f"missing skill file: {DESIGN_REVIEW_SKILL}"
     text = DESIGN_REVIEW_SKILL.read_text()
@@ -118,7 +139,7 @@ def test_design_review_skill_contract() -> None:
 
 
 def test_deep_modules_perspective_wiring() -> None:
-    for path in (PERSPECTIVES, PERSPECTIVE_AGENT, PHASE_PROMPTS):
+    for path in (PERSPECTIVES, PHASE_PROMPTS):
         assert "deep-modules" in path.read_text(), f"{path}: missing the deep-modules perspective"
     assert "design-principles.md" in PERSPECTIVES.read_text(), (
         "perspectives.md must point the deep-modules frame at design-principles.md"
@@ -130,6 +151,31 @@ def test_deep_modules_perspective_wiring() -> None:
     assert start != -1 and end != -1, "deep-plan SKILL.md must keep sections 4.3 and 4.4"
     assert "deep-modules" in skill[start:end], (
         "section 4.3 of deep-plan SKILL.md must launch the deep-modules perspective"
+    )
+
+
+def test_synthesis_lenses_run_in_the_orchestrator_turn() -> None:
+    # 4.3 sweeps the lenses inside the synthesis turn. No agent launch, so no
+    # barrier and no per-lens draft to merge.
+    skill = DEEP_PLAN_SKILL.read_text()
+    start = skill.find("### 4.3")
+    end = skill.find("### 4.4")
+    assert start != -1 and end != -1, "deep-plan SKILL.md must keep sections 4.3 and 4.4"
+    region = skill[start:end]
+
+    for needle in ("perspectives.md", "## Synthesis checklist"):
+        assert needle in region, f"section 4.3 must point at {needle!r}"
+
+    for banned in ("dp-plan-perspective", "in parallel"):
+        offending = [ln for ln in region.splitlines() if banned in ln]
+        assert not offending, (
+            f"section 4.3 still delegates ({banned!r}): {offending[0].strip()!r}"
+        )
+
+    assert "dp-plan-perspective" not in skill, (
+        "deep-plan SKILL.md must not name dp-plan-perspective anywhere; "
+        f"surviving line: "
+        f"{next(ln.strip() for ln in skill.splitlines() if 'dp-plan-perspective' in ln)!r}"
     )
 
 
@@ -163,9 +209,23 @@ def test_phase46_design_fleet_wiring() -> None:
 
 
 def test_execute_post_task_review_wiring() -> None:
+    # The post-task fleet moved into the implementer agent, so the diff and the
+    # critic prompts stay in the context that gets discarded. The dispatcher
+    # must NOT name a critic: that would mean it is reviewing diffs itself.
+    agent = (ROOT / "agents" / "dp-implement-task.md").read_text()
+    for needle in ("dp-design-critic", "dp-test-critic", "fleet-orchestration.md"):
+        assert needle in agent, f"dp-implement-task.md must reference {needle!r}"
+
+    assert "run_in_background: false" in agent, (
+        "a nested fleet must launch in the foreground; a backgrounded critic "
+        "returns an acknowledgement, not findings"
+    )
+
     text = EXECUTE_SKILL.read_text()
-    for needle in ("dp-design-critic", "fleet-orchestration.md"):
-        assert needle in text, f"deep-plan-execute SKILL.md must reference {needle!r}"
+    assert "dp-design-critic" not in text, (
+        "deep-plan-execute SKILL.md must not launch critics itself; the nested "
+        "fleet belongs to dp-implement-task"
+    )
 
 
 if __name__ == "__main__":

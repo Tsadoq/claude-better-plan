@@ -9,7 +9,7 @@ A Claude Code plugin for deep, co-authored planning of non-trivial work. You are
 1. **Research** -- three subagents triangulate in parallel: your codebase, a light web sweep, and any sources you provide (files, URLs, Jira tickets). You confirm the scope before anything else happens.
 2. **Decisions** -- every meaningful sub-decision (storage, algorithm, library, boundary placement...) becomes its own 3-to-5-option question, asked in dependency order. Each answer is written to the draft plan immediately, so a crashed run never loses a decision.
 3. **Deep research** -- one researcher per chosen option validates it against official docs. Contradictions come back to you as a re-ask, never a silent override.
-4. **Synthesis and critique** -- perspective drafts are merged into a task-by-task plan, assumptions are probed with real shell checks, then an adversarial critic (plus a design-review fleet) tries to refute the plan before you ever see it.
+4. **Synthesis and critique** -- one turn drafts the task-by-task plan and then sweeps it against a checklist of six lenses (simplicity, performance, maintainability, minimal-diff, security, deep-modules), assumptions are probed with real shell checks, then a triage-gated critic fleet tries to refute the plan before you ever see it. A small plan arms no critics and pays for none.
 5. **Approval and archive** -- you walk the plan through a structured approve/refine/change question (the only approval gate). On approval the plan is archived as a folder in your repo and you are handed off to implementation.
 
 ```mermaid
@@ -19,7 +19,7 @@ flowchart LR
     AR --> EX["/deep-plan:deep-plan-execute"]
 ```
 
-`/deep-plan:deep-plan-execute` then turns the plan's tasks into real harness tasks with dependencies (`TaskCreate` + `addBlockedBy`) and implements them one at a time in dependency order: failing test first, implement, verify, a dual post-task review of the task's diff (the design fleet and the test fleet side by side), a post-green stability re-run of the task's tests to catch flakes before completion, record an implementation note. Approval records a durable memo of the approved plan, which execute consults first (even after `/clear`) before falling back to the newest plan in the project's plans dir. It refuses to start while the plan has open questions.
+`/deep-plan:deep-plan-execute` then turns the plan's tasks into real harness tasks with dependencies (`TaskCreate` + `addBlockedBy`) and dispatches them one at a time in dependency order. Each task goes to a single writable `dp-implement-task` agent in a fresh context, which owns the whole increment -- failing test first, implement, verify, its own nested design and test review of the task's diff, a post-green stability re-run to catch flakes, record an implementation note -- and returns a six-line summary. The diff never reaches the dispatcher, which instead audits what changed against the task's `Target files` (using git, not the agent's own report) and blocks completion on any edit outside them. Approval records a durable memo of the approved plan, which execute consults first (even after `/clear`) before falling back to the newest plan in the project's plans dir. It refuses to start while the plan has open questions.
 
 ## Quick start
 
@@ -32,10 +32,9 @@ Then, in any project:
 
 ```
 /deep-plan add a rate limiter to the API
-/deep-plan slug:rate-limiter depth:exhaustive add a rate limiter to the API
+/deep-plan slug:rate-limiter add a rate limiter to the API
 ```
 
-- `depth: shallow | standard | exhaustive` -- how hard to work, from a quick single pass to multi-wave research with a looping critique. Default `standard`.
 - `slug: my-name` -- an explicit name for the plan folder; otherwise derived from the topic.
 
 After approval (and the recommended `/compact`), implement it:
@@ -71,20 +70,27 @@ To make plan writes prompt-free in default permission mode, allowlist the plan p
 {"permissions": {"allow": ["Edit(/docs/plans/**)", "Write(/docs/plans/**)", "Bash(mv docs/plans/*)", "Bash(test ! -e docs/plans/*)"]}}
 ```
 
+Execute time needs a wider allowlist, because the implementer agent writes real source files. Subagents **inherit** the parent session's permission mode and plugin-bundled agents cannot set their own, so in default mode every `Write`, `Edit`, and `Bash` inside every implementer prompts separately. Allowlist what your plan's tasks actually touch:
+
+```json
+{"permissions": {"allow": ["Edit(/src/**)", "Write(/src/**)", "Bash(uv run pytest*)"]}}
+```
+
 ## Guardrails
 
-- **Read-only planning.** A prompt-level contract lets the orchestrator write only the plan folder and a per-session `/tmp` sandbox (for verification probes that need scratch files; cleaned up on session end). Subagents are held read-only by `disallowedTools`, which also leaves them free to use any ambient MCP documentation tools during research.
+- **Read-only planning.** A prompt-level contract lets the orchestrator write only the plan folder and a per-session `/tmp` sandbox (for verification probes that need scratch files; cleaned up on session end). Planning subagents are held read-only by `disallowedTools`, which also leaves them free to use any ambient MCP documentation tools during research.
+- **One writable agent, bounded by audit.** `dp-implement-task` is the single exception: it must write to implement a task. It is bounded not by a tool block but by the dispatcher's scope audit -- git's report of what changed, compared against the task's `Target files`, with completion blocked on anything outside them -- plus a `Workflow` denial in its frontmatter.
 - **Approval is structural.** The plan is approved through one structured walk-the-plan question, never a plain-text "looks good?". Mechanical finalization (auto-repair, rename, overview regeneration) runs before the question, so it cannot be skipped.
 - **No native plan mode.** Its read-only guarantee is prompt-level anyway, and its injected workflow competes with this one; if plan mode is active, Phase 0 asks you to toggle it off. The full rationale is in `PLAN.md`.
 - **Crash-safe and re-entrant.** The plan lives in your repo from the first resolved decision; stale drafts and slug collisions are surfaced as resume/overwrite/rename questions, never silently clobbered.
 
 ## Design review
 
-A parallel critic fleet (one small-model `dp-design-critic` per red-flag cluster, then an adversarial verify pass on each finding) reviews design quality at plan time, critique time, and after each executed task's tests go green; `/design-review [path | git ref | plan-file]` runs the same fleet standalone. A sibling test-critic fleet (`dp-test-critic`) runs through the same parametrized recipe against the plan's `**Tests (TDD)**` blocks at critique time and against each task's diff at execute time; `/tdd-review [plan-file]` runs it standalone against a deep-plan plan's Tests (TDD) blocks. The design guidelines live in `skills/design-review/references/design-principles.md`, independently paraphrased from a named source with no affiliation (see that file's `## Attribution and scope`); the test guidelines live in `skills/tdd-review/references/test-principles.md`. The fleet prefers the harness Workflow tool and falls back to a plain agent fan-out where Workflow is unavailable.
+A parallel critic fleet (a cheap triage pass that names the clusters worth checking, then one small-model `dp-design-critic` per armed red-flag cluster, then an adversarial verify pass on each finding) reviews design quality at plan time, critique time, and after each executed task's tests go green; `/design-review [path | git ref | plan-file]` runs the same fleet standalone. A sibling test-critic fleet (`dp-test-critic`) runs through the same parametrized recipe against the plan's `**Tests (TDD)**` blocks at critique time and against each task's diff at execute time; `/tdd-review [plan-file]` runs it standalone against a deep-plan plan's Tests (TDD) blocks. At execute time both fleets run *inside* the implementer agent, so the diff stays one level down. The plan's structural soundness -- unscheduled work, wrong `Depends on` edges, code tasks with no tests, contradicted decisions, unverified claims -- is checked by the same `dp-readability-critic` leaf carrying a second cluster source, `plan-integrity-principles.md`, rather than by a separate agent. The design guidelines live in `skills/design-review/references/design-principles.md`, independently paraphrased from a named source with no affiliation (see that file's `## Attribution and scope`); the test guidelines live in `skills/tdd-review/references/test-principles.md`. The fleet prefers the harness Workflow tool and falls back to a plain agent fan-out where Workflow is unavailable.
 
 ## Development
 
-This repo is a single-plugin marketplace: the repo root is the plugin root. Orchestration lives in `skills/*/SKILL.md` with prompt fragments and templates under `references/`; the stdlib-only helper scripts live in `skills/deep-plan/scripts/`; contract tests are co-located per skill under `skills/<skill>/tests/` (discovery is owned by `pyproject.toml`); subagent definitions in `agents/`.
+This repo is a single-plugin marketplace: the repo root is the plugin root. Orchestration lives in `skills/*/SKILL.md` with prompt fragments and templates under `references/`; the stdlib-only helper scripts live in `skills/deep-plan/scripts/`; contract tests are co-located per skill under `skills/<skill>/tests/` (discovery is owned by `pyproject.toml`); subagent definitions in `agents/`. Each guidelines file is pinned by its own contract test -- `test_design_review_contract.py`, `test_test_principles_contract.py`, `test_readability_contract.py`, `test_plan_integrity_contract.py` -- and `test_agents_contract.py` pins that exactly one agent may write and that no shipped document names an agent the plugin does not ship.
 
 ```
 /plugin marketplace add /absolute/path/to/claude-better-plan   # local checkout

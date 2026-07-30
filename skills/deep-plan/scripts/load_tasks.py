@@ -7,10 +7,15 @@ harness Task API (one `TaskCreate` per task, then `TaskUpdate addBlockedBy`
 to wire `Depends on`).
 
 Usage:
-    load_tasks.py --plan <path>
+    load_tasks.py --plan <path> [--task N]
 
 `--plan` accepts a plan file or a plan folder; a folder resolves to its
 `plan.md` member via finalize_plan.resolve_plan_path.
+
+`--task N` narrows the output to the single task numbered N, so a per-task
+implementer can fetch its own task body instead of having plan fields
+re-typed into its prompt. Output becomes `{ok, plan, task}`; an N with no
+matching task is an error, not an empty result.
 
 Output (stdout, JSON):
     {
@@ -157,6 +162,11 @@ def main() -> int:
     parser.add_argument(
         "--plan", required=True, help="path to the finalized plan file or plan folder"
     )
+    parser.add_argument(
+        "--task",
+        type=int,
+        help="emit only this task number, for a single-task implementer",
+    )
     args = parser.parse_args()
 
     plan = resolve_plan_path(Path(args.plan).expanduser().resolve())
@@ -165,6 +175,15 @@ def main() -> int:
         return 1
 
     parsed = parse_plan(plan.read_text())
+
+    if args.task is not None:
+        selected = next((t for t in parsed["tasks"] if t["n"] == args.task), None)
+        if selected is None:
+            print(json.dumps({"ok": False, "error": f"task {args.task} not found in {plan}"}))
+            return 1
+        print(json.dumps({"ok": True, "plan": str(plan), "task": selected}, indent=2, sort_keys=True))
+        return 0
+
     parsed["ok"] = bool(parsed["tasks"])
     parsed["plan"] = str(plan)
     print(json.dumps(parsed, indent=2, sort_keys=True))

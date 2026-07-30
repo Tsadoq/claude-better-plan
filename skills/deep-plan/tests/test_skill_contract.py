@@ -1,8 +1,8 @@
-"""Contract test: SKILL.md frontmatter and the v0.3 wiring.
+"""Contract test: SKILL.md frontmatter and the orchestration wiring.
 
-Guards Task 1 (depth arg + ${CLAUDE_SESSION_ID} hardening) and Task 3 (the
-Phase 4.6 critique step + dp-plan-critic agent) against regression. Stdlib only,
-so CI does not need pyyaml.
+Guards the frontmatter and ${CLAUDE_SESSION_ID} hardening, the single-mode
+call sites (no depth knob), and the Phase 4.6 critique step against
+regression. Stdlib only, so CI does not need pyyaml.
 
 Runnable two ways:
     python3 skills/deep-plan/tests/test_skill_contract.py
@@ -18,8 +18,6 @@ ROOT = Path(__file__).resolve().parents[3]
 DEEP_PLAN_SKILL = ROOT / "skills" / "deep-plan" / "SKILL.md"
 EXECUTE_SKILL = ROOT / "skills" / "deep-plan-execute" / "SKILL.md"
 DESIGN_REVIEW_SKILL = ROOT / "skills" / "design-review" / "SKILL.md"
-PHASE_PROMPTS = ROOT / "skills" / "deep-plan" / "references" / "phase-prompts.md"
-CRITIC_AGENT = ROOT / "agents" / "dp-plan-critic.md"
 PHASE_PROMPTS = ROOT / "skills" / "deep-plan" / "references" / "phase-prompts.md"
 
 
@@ -47,19 +45,151 @@ def test_skill_frontmatter_and_wiring() -> None:
     text = DEEP_PLAN_SKILL.read_text()
     fm = _frontmatter(text)
 
-    # Task 1: argument-hint + depth table + ${CLAUDE_SESSION_ID}.
+    # argument-hint + ${CLAUDE_SESSION_ID} hardening.
     assert _has_key(fm, "argument-hint"), "deep-plan SKILL.md needs an argument-hint"
-    assert "Depth scaling" in text, "deep-plan SKILL.md must document the depth-scaling table"
-    for level in ("shallow", "standard", "exhaustive"):
-        assert level in text, f"depth table missing level {level!r}"
     assert "${CLAUDE_SESSION_ID}" in text, "must use the ${CLAUDE_SESSION_ID} substitution"
 
     # Task 1: no literal placeholder survives.
     assert "<SESSION_ID>" not in text, "literal <SESSION_ID> placeholder must be replaced"
 
-    # Task 3: the critique step is wired and its agent exists.
+    # The critique step is wired.
     assert "Phase 4.6" in text, "SKILL.md must reference Phase 4.6 (adversarial critique)"
-    assert CRITIC_AGENT.exists(), f"missing critic agent: {CRITIC_AGENT}"
+
+
+def test_no_depth_knob_survives() -> None:
+    # Zero real runs ever passed a depth token, so the knob bought nothing and
+    # cost five branch points. One mode now; each call site states its own
+    # absolute bound. `shallow` is NOT banned -- dp-research-shallow is live.
+    # The scan covers only these two orchestration files: docs/plans/ and the
+    # golden fixtures record superseded plans verbatim and must keep their text.
+    for path in (DEEP_PLAN_SKILL, PHASE_PROMPTS):
+        text = path.read_text()
+        for token in ("depth:", "Depth scaling", "exhaustive"):
+            assert token not in text, f"{path.name} still carries the depth token {token!r}"
+
+    assert "one pass, loop once on material findings" in DEEP_PLAN_SKILL.read_text(), (
+        "Phase 4.6 must state its single absolute loop bound now that the depth table is gone"
+    )
+
+
+def test_phase46_gates_the_fleet_on_triage() -> None:
+    # A small plan must be able to arm nothing and pay for no critics at all.
+    skill = DEEP_PLAN_SKILL.read_text()
+    start = skill.find("## Phase 4.6")
+    end = skill.find("## Phase 5")
+    assert start != -1 and end != -1, "deep-plan SKILL.md must keep Phase 4.6 and Phase 5 headings"
+
+    prompts = PHASE_PROMPTS.read_text()
+    p_start = prompts.find("Phase 4.6")
+    assert p_start != -1, "phase-prompts.md must keep a Phase 4.6 fragment"
+
+    for name, region in (("SKILL.md", skill[start:end]), ("phase-prompts.md", prompts[p_start:])):
+        assert "Triage gate" in region, (
+            f"{name}: Phase 4.6 must cite the recipe's `## Triage gate` rather than "
+            f"launching every cluster unconditionally"
+        )
+        assert "Checkpoint 2" in region, (
+            f"{name}: Phase 4.6 must name Checkpoint 2 as where a plan that arms "
+            f"nothing proceeds to"
+        )
+
+
+def test_plan_integrity_runs_through_the_fleet() -> None:
+    # The plan-integrity checks are now a caller-supplied cluster carried by the
+    # haiku readability leaf, not a standalone inherit-model agent.
+    skill = DEEP_PLAN_SKILL.read_text()
+    start = skill.find("## Phase 4.6")
+    end = skill.find("## Phase 5")
+    assert start != -1 and end != -1, "deep-plan SKILL.md must keep Phase 4.6 and Phase 5 headings"
+
+    prompts = PHASE_PROMPTS.read_text()
+    p_start = prompts.find("Phase 4.6")
+    assert p_start != -1, "phase-prompts.md must keep a Phase 4.6 fragment"
+
+    for name, region in (("SKILL.md", skill[start:end]), ("phase-prompts.md", prompts[p_start:])):
+        for needle in ("plan-integrity-principles.md", "fleet-orchestration.md"):
+            assert needle in region, f"{name}: Phase 4.6 must reference {needle!r}"
+
+    for name, text in (("SKILL.md", skill), ("phase-prompts.md", prompts)):
+        assert "dp-plan-critic" not in text, (
+            f"{name} still names the retired dp-plan-critic: "
+            f"{next(ln.strip() for ln in text.splitlines() if 'dp-plan-critic' in ln)!r}"
+        )
+
+    retired = ROOT / "agents" / "dp-plan-critic.md"
+    assert not retired.exists(), f"the retired agent file must be deleted: {retired}"
+
+
+def test_execute_audits_task_scope_before_completion() -> None:
+    # The dispatcher attributes changed paths to the task itself: a plain diff
+    # omits newly created files, and a bare untracked listing would wrongly
+    # blame the task for scratch files already in the user's tree. Both halves
+    # are needed, and the untracked snapshot must be taken BEFORE dispatch.
+    text = EXECUTE_SKILL.read_text()
+
+    untracked = "git ls-files --others --exclude-standard"
+    diff_names = "git diff --name-only"
+    dispatch = "deep-plan:dp-implement-task"
+    completion = "## Step 6"
+
+    for anchor in (untracked, diff_names, dispatch, completion, "design.md"):
+        assert anchor in text, f"deep-plan-execute SKILL.md must contain {anchor!r}"
+
+    assert text.count(untracked) >= 2, (
+        f"expected both a pre-dispatch snapshot and a post-run listing of {untracked!r}, "
+        f"found {text.count(untracked)} occurrence(s)"
+    )
+
+    for earlier, later in (
+        (untracked, dispatch),
+        (dispatch, diff_names),
+        (diff_names, completion),
+    ):
+        assert text.index(earlier) < text.index(later), (
+            f"{earlier!r} must appear before {later!r} in the dispatch loop"
+        )
+
+
+def test_subagent_budget_and_degradation_documented() -> None:
+    # A large plan must degrade on purpose rather than die mid-run against the
+    # session cap. Both halves of the dispatch pair state their side of it.
+    text = EXECUTE_SKILL.read_text()
+
+    assert "200 subagents" in text, (
+        "the budget section must spell out '200 subagents', not a bare numeral"
+    )
+    assert "fleet-orchestration.md" in text, (
+        "the budget section must cite the recipe as the caps' home"
+    )
+    for mode in ("full", "design-only", "inline"):
+        assert mode in text, f"the degradation table must name the fleet_mode {mode!r}"
+
+    agent = (ROOT / "agents" / "dp-implement-task.md").read_text()
+    assert "fleet_mode" in agent, (
+        "dp-implement-task.md must read fleet_mode from its input and honour it"
+    )
+
+
+def test_permission_inheritance_mitigation_documented() -> None:
+    # A writable subagent inherits the parent's permission mode, so in default
+    # mode every Write/Edit/Bash inside every implementer prompts. The user must
+    # hear that once, BEFORE the first dispatch, not after task 1 stalls.
+    text = EXECUTE_SKILL.read_text()
+
+    heading = "## Preflight"
+    assert heading in text, "deep-plan-execute SKILL.md must carry a `## Preflight` section"
+
+    end = text.find("\n## ", text.index(heading) + len(heading))
+    section = text[text.index(heading) :] if end == -1 else text[text.index(heading) : end]
+    for needle in ("inherit", "permission", "permissions.deny"):
+        assert needle in section, f"the Preflight section must mention {needle!r}"
+
+    step5 = "## Step 5"
+    assert step5 in text, "deep-plan-execute SKILL.md must keep its `## Step 5` heading"
+    assert text.index(heading) < text.index(step5), (
+        "the Preflight warning must precede Step 5; a warning after the first "
+        "dispatch is a warning the user never got in time"
+    )
 
 
 def test_skill_forbids_plan_mode_tools() -> None:
@@ -242,13 +372,17 @@ def test_execute_skill_dual_reads_and_gates_on_design_notes() -> None:
     assert "-draft/plan" in text, "discovery must exclude *-draft/ folders"
     assert "load_tasks.py" in text, "execute skill must still invoke load_tasks.py"
 
-    # Design-notes gate: the Implementation notes append is ordered after the
-    # verification-pass step and before the TaskUpdate completion wording.
-    verify_pos = text.index("Run the `verification` command.")
-    notes_pos = text.index("## Implementation notes")
-    complete_pos = text.index("mark the task `completed` via `TaskUpdate`")
-    assert verify_pos < notes_pos < complete_pos, (
-        "design.md notes append must sit between verification and completion"
+    # Design-notes gate: the verification-then-notes ordering now lives in the
+    # implementer agent, which owns the whole per-task increment. The dispatcher
+    # only completes the task afterwards.
+    agent = (ROOT / "agents" / "dp-implement-task.md").read_text()
+    verify_pos = agent.index("Prove green")
+    notes_pos = agent.index("## Implementation notes")
+    assert verify_pos < notes_pos, (
+        "dp-implement-task.md: the design.md notes append must follow the green run"
+    )
+    assert "`completed`" in text and "TaskUpdate" in text, (
+        "the dispatcher must still own the TaskUpdate completion step"
     )
 
     # After all tasks: status flip + index refresh, scoped to folder plans.

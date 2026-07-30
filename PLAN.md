@@ -14,7 +14,7 @@ This document describes the **current design** (v0.6 of the plugin: the v0.2 ref
 - Runs an adversarial critique (Phase 4.6) that tries to refute the plan before the user approves it.
 - Produces an AI-consumable plan folder that lives in the project: born as `plans_dir/<topic>-draft/` (canonical `plan.md` inside) at the first resolved decision, renamed to `plans_dir/<slug>/` before review. Descriptive slug, structured headings, `TaskCreate`-loadable, code-only TDD embedded, plus a `design.md` member carrying the expanded per-decision rationale and, during execution, per-task implementation notes.
 - Saves the plan to a user-chosen project-local location (default `<repo>/docs/plans/`), never `~/.claude/plans/`.
-- A `depth:` argument scales fan-out and effort, from a fast single pass to an exhaustive multi-wave run.
+- Runs one mode. Every phase states an absolute fan-out and loop bound at its call site, and the Phase 4.6 fan-out is triage-gated so a small plan pays for no critics.
 
 The user is a co-author of the plan, not a reviewer.
 
@@ -22,15 +22,15 @@ The user is a co-author of the plan, not a reviewer.
 
 ```mermaid
 flowchart TD
-    Args["/deep-plan slug:x depth:shallow|standard|exhaustive ..."] --> P0
-    P0[Phase 0: Bootstrap<br/>parse depth+slug, set effort, session state] --> P1[Phase 1: Parallel triangulation]
+    Args["/deep-plan slug:x ..."] --> P0
+    P0[Phase 0: Bootstrap<br/>parse slug, session state] --> P1[Phase 1: Parallel triangulation]
     P1 --> CP1{Checkpoint 1<br/>scope confirm}
     CP1 -->|reframe| P1
     CP1 -->|confirm| P2[Phase 2: Decision surfacing]
     P2 --> P3[Phase 3: Targeted deep research<br/>+ ambient MCP doc tools]
     P3 -->|contradiction| P2
     P3 --> P4[Phase 4: Synthesis & verification]
-    P4 --> P46[Phase 4.6: Adversarial critique<br/>dp-plan-critic refutes the plan]
+    P4 --> P46[Phase 4.6: Adversarial critique<br/>triage-gated critic fleet refutes the plan]
     P46 -->|material gaps| P4
     P46 -->|reverses a decision| P2
     P46 -->|clean| REP["finalize_plan.py --repair<br/>+ draft-to-slug rename"]
@@ -38,12 +38,12 @@ flowchart TD
     CP2 -->|refine/drop/add| P4
     CP2 -->|change decision| P2
     CP2 -->|approve| P5[Phase 5: in-place archive split + handoff]
-    P5 --> Exec["/deep-plan:deep-plan-execute<br/>load_tasks.py -> TaskCreate -> addBlockedBy -> TDD loop"]
+    P5 --> Exec["/deep-plan:deep-plan-execute<br/>load_tasks.py -> TaskCreate -> addBlockedBy -> dispatch + scope audit"]
 ```
 
 ### Phase 0: Bootstrap
 
-Parse `$ARGUMENTS` for the optional `slug:` and `depth:` tokens (there is no native key:value parser); the remainder is the topic. If native plan mode is active, ask the user in one sentence to toggle it off (Shift+Tab) and stop the turn. Run `setup_session.py` to resolve the project root and `plans_dir` (prompting once per project: `docs/plans/` recommended, `.claude/plans/` warned against as a protected path, with a warn-and-offer-to-move sentinel for remembered protected dirs), detect stale `*-draft/` folders (and legacy flat drafts) left by abandoned runs (resume / overwrite / start fresh), and create the per-session sandbox.
+Parse `$ARGUMENTS` for the optional `slug:` token (there is no native key:value parser); the remainder is the topic. If native plan mode is active, ask the user in one sentence to toggle it off (Shift+Tab) and stop the turn. Run `setup_session.py` to resolve the project root and `plans_dir` (prompting once per project: `docs/plans/` recommended, `.claude/plans/` warned against as a protected path, with a warn-and-offer-to-move sentinel for remembered protected dirs), detect stale `*-draft/` folders (and legacy flat drafts) left by abandoned runs (resume / overwrite / start fresh), and create the per-session sandbox.
 
 ### Phase 1: Parallel triangulation
 
@@ -55,41 +55,52 @@ Enumerate 2 to 5 sub-decisions worth surfacing, generate option sets inline, and
 
 ### Phase 3: Targeted deep research
 
-Launch one `dp-research-deep` (sonnet) per decision branch, capped at 4 in parallel (waves of 4). A `## Contradiction` in any dossier loops back to Phase 2 for that one decision with the evidence quoted. Skipped entirely when no novelty needs research (or at `depth: shallow`).
+Launch one `dp-research-deep` (sonnet) per decision branch, capped at 4 in parallel (waves of 4). A `## Contradiction` in any dossier loops back to Phase 2 for that one decision with the evidence quoted. Skipped entirely when no novelty needs research.
 
 ### Phase 4: Synthesis and verification
 
-Generate the slug, rename the draft folder to `plans_dir/<slug>/` at Phase 4.2 behind a fail-closed guard (`test ! -e` on both the folder and the legacy flat form), launch 1 to 3 `dp-plan-perspective` drafts (simplicity, performance, maintainability, minimal-diff, security), merge them into the plan body, seed `<slug>/design.md` from `references/design-md-template.md` with the expanded per-decision rationale and evidence links, and run inline verification probes (writing any fixtures into the sandbox).
+Generate the slug, rename the draft folder to `plans_dir/<slug>/` at Phase 4.2 behind a fail-closed guard (`test ! -e` on both the folder and the legacy flat form), then draft the plan body once and sweep it against the six synthesis lenses (simplicity, performance, maintainability, minimal-diff, security, deep-modules) from `references/perspectives.md` — one pass per lens, inside the synthesis turn, launching no agents. Seed `<slug>/design.md` from `references/design-md-template.md` with the expanded per-decision rationale and evidence links, and run inline verification probes (writing any fixtures into the sandbox).
 
 ### Phase 4.6: Adversarial critique
 
-Launch `dp-plan-critic` to refute the synthesized plan: missing tasks, wrong or missing dependencies, code tasks lacking tests, decisions contradicted by research, and untested assumptions, each tagged `material` or `minor`. Material findings are fixed inline (or, if they reverse a user decision, loop back to Phase 2 with the contradiction quoted); minor findings go to `## Open questions`. Then Checkpoint 2 walks the plan with the user (approve / refine / drop / add / change a decision).
+Arm each critic fleet from a named signal, then run the armed clusters through the recipe's triage gate. A code task with a missing or weak `**Tests (TDD)**` block arms the test fleet; a new module, boundary, or interface arms the design fleet; a new or rewritten `design.md` or `architecture.md` section arms the readability and plan-integrity clusters. A plan arming nothing launches no critics and goes straight to Checkpoint 2.
+
+Plan-structure review — missing tasks, wrong or missing dependencies, code tasks lacking tests, decisions contradicted by research, untested assumptions — is carried by the `dp-readability-critic` leaf running over a second cluster source, `references/plan-integrity-principles.md`, rather than by a dedicated agent: that leaf supplies no rubric of its own, so a new cluster source needs no new agent type. Findings are tagged `material` or `minor`. Material findings are fixed inline (or, if they reverse a user decision, loop back to Phase 2 with the contradiction quoted); minor findings go to `## Open questions`. The bound is absolute: one pass, loop once on material findings. Then Checkpoint 2 walks the plan with the user (approve / refine / drop / add / change a decision).
 
 ### Phase 5: Archive and handoff
 
 `finalize_plan.py --repair` auto-normalizes the plan in place BEFORE the Checkpoint 2 question (including regenerating the `## Task overview` table between its markers), so finalization cannot be skipped; Checkpoint 2's `AskUserQuestion` ("Approve and finalize") is the single approval gate. On approval, `finalize_plan.py --archive` rewrites the lean `plans_dir/<slug>/plan.md` in place (source and destination are the same file), stamps `**Status**: approved` and `**Date**` under the title, splits the appendices into the `probes.md` and `research.md` folder members, and regenerates the `plans_dir/README.md` index; the orchestrator then recommends the user run `/compact` before handing the plan to `/deep-plan:deep-plan-execute`.
 
-## Depth control
+## Fan-out bounds
 
-`depth: shallow | standard | exhaustive` (default `standard`) is parsed in Phase 0 and read by every later phase. It also maps to the native `effort` field.
+There is one mode. Every phase states its own absolute bound at its call site, and every agent launch is `effort: inherit`:
 
-| Aspect | shallow | standard (default) | exhaustive |
-|--------|---------|--------------------|------------|
-| Phase 1 fan-out | explore + shallow (source-ingest if sources) | explore + shallow (+ source-ingest) | same, may re-run on weak evidence |
-| Phase 3 deep research | skip entirely | one per decision, cap 4, waves of 4 | multiple waves, never skip when novelty exists |
-| Phase 4 perspectives | 1 | 1 to 3 | 3 |
-| Phase 4.6 critique | 1 quick pass, no loop | 1 pass, loop once on material findings | loop until no material findings (cap 3) |
-| `effort` | low to medium | inherit | high to xhigh |
+| Phase | Bound |
+|-------|-------|
+| Phase 1 | explore + shallow always, + source-ingest when the user supplied sources |
+| Phase 3 | one `dp-research-deep` per decision, cap 4, waves of 4; skipped when no novelty exists |
+| Phase 4 | no agents: six lenses swept in the synthesis turn |
+| Phase 4.6 | one pass, loop once on material findings; each fleet armed by signal, then triage-gated |
 
 ## Implementation handoff
 
-`/deep-plan:deep-plan-execute [plan-path]` is a companion skill in the same plugin. It accepts a plan folder or its `plan.md`; with no argument, discovery first consults the durable approved-plan memo that Phase 5 records at approval (read back via `setup_session.py --lookup`, and honored only while the memoized plan file still exists and carries `**Status**: approved`), and only then falls back to picking the newest plan across both shapes (`<slug>/plan.md` preferred, legacy flat `<slug>.md` still found), excluding the generated README, legacy dotted siblings, and unfinished `*-draft/` folders. It runs `load_tasks.py` to parse the finalized plan's `## Tasks` into structured JSON, refuses to start while `## Open questions` is non-empty, then performs a two-pass load against the harness Task API: pass 1 creates one task per `### Task` (`TaskCreate`), capturing the returned opaque id into an `int -> id` map; pass 2 wires each task's `Depends on` into `addBlockedBy` (`TaskUpdate`). It then drives a test-first loop task by task in dependency order: write the failing test, implement, run the task's verification command, and (for folder plans) append a terse implementation note to `design.md` before marking the task completed. When all tasks complete, folder plans get their `**Status**` flipped to `executed` and the index refreshed via `finalize_plan.py --index`. Requires Claude Code >= v2.1.142 for the Task dependency API.
+`/deep-plan:deep-plan-execute [plan-path]` is a companion skill in the same plugin. It accepts a plan folder or its `plan.md`; with no argument, discovery first consults the durable approved-plan memo that Phase 5 records at approval (read back via `setup_session.py --lookup`, and honored only while the memoized plan file still exists and carries `**Status**: approved`), and only then falls back to picking the newest plan across both shapes (`<slug>/plan.md` preferred, legacy flat `<slug>.md` still found), excluding the generated README, legacy dotted siblings, and unfinished `*-draft/` folders. It runs `load_tasks.py` to parse the finalized plan's `## Tasks` into structured JSON, refuses to start while `## Open questions` is non-empty, then performs a two-pass load against the harness Task API: pass 1 creates one task per `### Task` (`TaskCreate`), capturing the returned opaque id into an `int -> id` map; pass 2 wires each task's `Depends on` into `addBlockedBy` (`TaskUpdate`).
+
+It then **dispatches** rather than implements. For each task in dependency order it captures a baseline ref, snapshots pre-existing untracked paths, and launches exactly one `dp-implement-task` agent with four scalars: the plan path, the task number, the baseline ref, and a `fleet_mode`. That agent owns the whole increment in a context that is discarded on return — failing test first, implement, verify, its own nested design and test critic fleets over the task diff, material-finding fixes, the post-green stability re-run, and the `design.md` implementation note — and returns a fixed six-line summary. The agent fetches its own task body via `load_tasks.py --task N`, so no field of the plan grammar is re-typed into a prompt.
+
+The dispatcher never sees a diff. Instead it audits scope from git: the union of `git diff --name-only <baseline>` and the post-run untracked listing, minus the pre-dispatch snapshot, compared against the task's `Target files` (plus the plan folder's `design.md`, which the note append targets). Both halves are needed — a plain diff omits newly created files, and a bare untracked listing would wrongly attribute pre-existing scratch files. Any path outside that set blocks completion and is reported to the user; nothing is auto-reverted. When all tasks complete, folder plans get their `**Status**` flipped to `executed` and the index refreshed via `finalize_plan.py --index`. Requires Claude Code >= v2.1.142 for the Task dependency API.
+
+Because the fleet is nested inside the implementer, per-task agent consumption is a range (one implementer plus 8 finders at minimum, but the verify stage launches one agent per surviving finding and is uncapped). `fleet_mode` degrades on the top of that range: `full` up to 8 tasks, `design-only` for 9 to 16, `inline` beyond 16.
 
 `load_tasks.py` reuses the section-slicing helpers (`_header_pos`, `_section_end`, `_section_body`) from `finalize_plan.py` rather than re-implementing them.
 
 ## Read-only enforcement (current model)
 
-The orchestrator is held read-only by a prompt-level contract (R1 in SKILL.md): it runs in the session's normal permission mode and may write only the project-local plan file and the per-session sandbox. There is no tool-level gate on the orchestrator; the contract is enforced by the skill text and the checkpoint gates. The subagents are **not** held read-only by `permissionMode` -- the harness ignores `permissionMode`, `hooks`, and `mcpServers` on plugin-bundled agents. Instead each `dp-*` agent declares a `disallowedTools` list that blocks `Write`, `Edit`, and `NotebookEdit`, reinforced by a read-only system prompt. The research agents (`dp-research-shallow`, `dp-research-deep`, `dp-source-ingest`) also disallow `Bash`, so they have no shell write vector at all; `dp-explore-codebase`, `dp-plan-perspective`, and `dp-plan-critic` keep `Bash` for read-only inspection. That residual Bash is a theoretical write vector, mitigated by the prompt and the trusted-session model, not a hard sandbox. Every agent also defensively disallows native plan mode's approval tool, since the harness nudges plan-shaped subagents toward it even though the skill never uses plan mode.
+The orchestrator is held read-only by a prompt-level contract (R1 in SKILL.md): it runs in the session's normal permission mode and may write only the project-local plan file and the per-session sandbox. There is no tool-level gate on the orchestrator; the contract is enforced by the skill text and the checkpoint gates. The planning subagents are **not** held read-only by `permissionMode` -- the harness ignores `permissionMode`, `hooks`, and `mcpServers` on plugin-bundled agents. Instead each planning `dp-*` agent declares a `disallowedTools` list that blocks `Write`, `Edit`, and `NotebookEdit`, reinforced by a read-only system prompt. The research agents (`dp-research-shallow`, `dp-research-deep`, `dp-source-ingest`) also disallow `Bash`, so they have no shell write vector at all; `dp-explore-codebase` keeps `Bash` for read-only inspection. That residual Bash is a theoretical write vector, mitigated by the prompt and the trusted-session model, not a hard sandbox. Every agent also defensively disallows native plan mode's approval tool, since the harness nudges plan-shaped subagents toward it even though the skill never uses plan mode.
+
+**The execute-time exception.** `dp-implement-task` is the one agent that may write, because writing code is its job. It cannot be bounded by a tool block, so it is bounded three other ways: `disallowedTools` denies `Workflow` (whose nesting is capped at one level anyway), the dispatcher audits its changed paths against the task's `Target files` from git's report rather than the agent's self-report, and its own prompt forbids committing, editing `plan.md`, or touching permission settings. `test_agents_contract.py` pins that the writable set is exactly `{dp-implement-task}`, so a second writable agent cannot appear by accident.
+
+One consequence is unavoidable and is documented in the execute skill's `## Preflight`: subagents **inherit** the parent session's permission mode, and since plugin-bundled agents cannot set `permissionMode`, a default-mode run prompts on every `Write`, `Edit`, and `Bash` inside every implementer. The mitigation is a user-side project-local allowlist, not a bypass flag. Restricting which agent types the implementer may spawn would likewise need a user-side `permissions.deny` rule: the parenthesised `Agent(type)` allowlist form is silently ignored inside a subagent definition, and plugins cannot ship permissions.
 
 Dropping the old `tools` allowlist for `disallowedTools` is also what lets the agents reach any ambient MCP documentation tools during research; an explicit `tools` allowlist would have stripped MCP access.
 
@@ -125,8 +136,8 @@ v0.2 (refactor of the v0.1 design below):
 
 v0.3 (power features, deeper research, engineering hardening):
 
-6. **Depth control.** The `depth: shallow|standard|exhaustive` argument scales fan-out, research waves, perspective count, critique loops, and `effort`.
-7. **Adversarial critique.** A new Phase 4.6 launches `dp-plan-critic` to refute the plan before approval.
+6. **Depth control.** A `depth:` argument scaled fan-out, research waves, perspective count, critique loops, and `effort`. (Removed in v0.10; see `## Retired designs`.)
+7. **Adversarial critique.** A new Phase 4.6 launches a standalone plan-critic agent to refute the plan before approval. (Folded into the critic fleet in v0.10.)
 8. **Implementation handoff.** The `/deep-plan:deep-plan-execute` companion skill plus `load_tasks.py` turn the plan into harness tasks with dependencies and drive a TDD loop.
 9. **Opportunistic MCP research.** Subagents use `disallowedTools` (not a `tools` allowlist), keeping them write-free while letting them reach ambient MCP documentation tools.
 10. **Engineering floor.** Read-only enforcement re-documented accurately (`disallowedTools`, not `permissionMode`); `ruff` + `mypy --strict` + structural CI gates added; the untested helper scripts backfilled with tests.
@@ -161,6 +172,37 @@ v0.9 (narrative artifact set, readability enforcement; eight decisions resolved 
 24. **Question-first dossiers.** `agents/dp-research-deep.md` is the single normative home of the dossier shape (`**The question**` / `**The answer**` / `**What we found**` / `**Sources**`, bold labels so dossiers nest under `###` headings without breaking appendix slicing), and the `## Research dossiers` appendix opens with a per-decision coverage table. (Decision 3)
 25. **Readability enforcement in three layers.** Authoring rules live once in `references/readability-principles.md` (quoted by templates and agent prompts), a `dp-readability-critic` fleet reviews the finished artifacts in Phase 4.6, and `finalize_plan.py` adds warning-only mechanical checks: dangling H2/H3 sections and decisions-index links that resolve to no design.md heading (sibling design.md discovered by path convention; absent design.md disables the link check, so legacy plans gain no warnings). (Decision 4)
 26. **Self-explaining probes and structured Change blocks.** Probe entries carry why / command / observed / what-a-failure-would-have-meant around the unchanged `[probe N]` anchor line, and every `**Change**` block continues after its summary sentence in structured sub-bullets; all machine contracts stay byte-compatible, pinned by a frozen legacy golden fixture. (Decisions 5 to 8)
+
+v0.10 (delegated execute, lean fan-out; six decisions resolved via a dogfooded /deep-plan run):
+
+27. **Delegated execute.** Each task is implemented by one writable `dp-implement-task` agent in a fresh context that is discarded on return, instead of by the orchestrator in-context. The dispatcher's growth per task falls to a fixed six-line summary, and the diff-reinjection cost disappears with it: the diff never crosses back up. (Decision 1)
+28. **Lean planning fan-out.** Three cuts together: the Phase 4 perspective fan-out collapses into a lens checklist the synthesis turn sweeps itself, the Phase 4.6 fleet is armed by signal and then triage-gated, and the standalone plan critic folds into that fleet as its own cluster source. This removes both `inherit`-model agent types, which held ~45% of subagent output, and two of the four sequential agent barriers. (Decision 2)
+29. **Depth knob removed.** No run in roughly twenty ever passed a `depth:` token, so the knob bought nothing while costing five branch points. One mode; each call site states its own absolute bound. (Decision 3)
+30. **Nested critic fleets.** The per-task design and test fleets run *inside* the implementer, launched with `run_in_background: false` and taking the recipe's plain-`Agent` fallback path because `workflow()` nesting is capped at one level. Diff text, finder prompts, verifiers, and fix turns all stay in the discarded context. (Decision 4)
+31. **Scope audit instead of a tool block.** The writable agent gets full write access, bounded by an orchestrator-side audit that compares task-attributable changed paths (git diff plus untracked listing, minus a pre-dispatch snapshot) against the task's `Target files` before completion. This mechanically enforces the touch-only-what-the-task-names rule that nothing checked before, at three shell calls per task and no worktree overhead. (Decision 5)
+32. **Implementer tier held constant.** `model: inherit, effort: inherit`, matching the tier the orchestrator used for this work before. The saving comes from a fresh discarded context, not a cheaper model, so holding the tier keeps the one place that writes real code at full quality and keeps the before-and-after comparison honest. (Decision 6)
+
+## Retired designs
+
+> Superseded designs kept for rationale only, same convention as the History sections below: where these conflict with the current design above, the current design wins. Statements of fact about the harness are corrected in place rather than preserved, since a wrong claim is not useful rationale.
+
+### Depth control (v0.3 to v0.9)
+
+A `depth: shallow | standard | exhaustive` argument (default `standard`) was parsed in Phase 0 and read by every later phase, scaling Phase 1 fan-out, Phase 3 research waves, the Phase 4 perspective count, the Phase 4.6 critique loop, and the native `effort` field.
+
+Removed in v0.10 because zero of roughly twenty real runs ever passed the token. The knob's whole cost was paid at read time — five branch points every phase had to interpret — for a behaviour nobody selected. The alternatives considered were auto-sizing depth from Phase 1 evidence, asking at Checkpoint 1, and inverting the default to shallow; all were rejected as still paying the branch cost. The single surviving mode is what `standard` did, made cheap enough by the two fan-out cuts shipped alongside.
+
+### Perspective fan-out (v0.3 to v0.9)
+
+Phase 4 launched 2 to 4 `inherit`-model plan-perspective agents in parallel, each drafting a full `## Tasks` block from one frame (simplicity, performance, maintainability, minimal-diff, security, plus deep-modules always), which the orchestrator then merged.
+
+Replaced in v0.10 by a checklist the synthesis turn walks in-turn, one pass per lens, in `references/perspectives.md`. Parallel drafts bought diversity but cost an agent barrier, an `inherit`-tier fan-out, and a merge step that mostly took the union anyway. The lens frames themselves were kept verbatim; only the delivery changed.
+
+### Standalone plan critic (v0.3 to v0.9)
+
+Phase 4.6 launched one `inherit`-model plan-critic agent that returned findings under five fixed headings (missing tasks, wrong or missing dependencies, code tasks lacking tests, decisions contradicted by research, untested assumptions) plus a one-line verdict.
+
+Replaced in v0.10 by `references/plan-integrity-principles.md`, a cluster source carried by the existing haiku `dp-readability-critic` leaf through the standard find-then-verify fleet recipe. All five check classes survive as questions in the `### Plan integrity` cluster, pinned by `test_plan_integrity_contract.py`. A separate file rather than a second cluster in `readability-principles.md`, because that file's contract test asserts exactly one cluster and because plan-structure knowledge does not belong in a file scoped to narrative readability.
 
 ## History (flat-file plan layout)
 
@@ -221,7 +263,7 @@ This layout is **plugin-ready**: if v2 wants versioning, the `~/gits/plan-modes/
 |---|---|
 | Plugin in personal marketplace | Strong versioning + atomic install, but plugin-bundled subagents cannot use `permissionMode`, `hooks`, or `mcpServers`, so the multi-component split (skill or plugin + user-scope agents) is unavoidable in either form. User explicitly disclaimed team-wide rollout, neutralising the distribution advantage. Iteration friction (commit, tag, reinstall on every tweak) hurts in v1. Versioning can be added later by `git init` in the skill folder. Migration is a verbatim transplant. |
 | Pure-hooks (`UserPromptSubmit` parses `/deep-plan`, hook scripts orchestrate) | Orchestration prompts are far simpler to author as markdown body than as hook-injected `additionalContext`. Lose syntax highlighting, lose `argument-hint`, lose `disable-model-invocation` semantics. |
-| Single mega-subagent via `@dp-orchestrator` | Subagents cannot spawn subagents in Claude Code; the orchestrator must spawn five specialised agents. Structurally impossible. |
+| Single mega-subagent owning the whole workflow | Rejected because the user gates (Checkpoint 1 and 2) must happen in the main conversation, where `AskUserQuestion` reaches the user; a subagent cannot hold an approval gate. Nesting itself is *not* the obstacle -- nested agents do work, which is what execute-time delegation relies on. |
 | Slash command (`~/.claude/commands/deep-plan.md`) | Slash commands are deprecated; new convention is to use a skill. Skills are a strict superset (bundle supporting files, scoped hooks, dynamic context injection). |
 
 #### Trade-offs accepted
@@ -256,9 +298,9 @@ flowchart TD
     A4 --> P3a{contradiction?}
     P3a -->|yes, re-ask| P2
     P3a -->|no| P4
-    P4[Phase 4: Synthesis & Verification<br/>perspective fan-out + sandbox POCs]
-    P4 --> A5[dp-plan-perspective<br/>inherit, parallel up to 3]
-    A5 --> CP2
+    P4[Phase 4: Synthesis & Verification<br/>six lenses swept in-turn + sandbox POCs]
+    P4 --> P46g[Phase 4.6: armed + triage-gated critic fleet]
+    P46g --> CP2
     CP2{Checkpoint 2<br/>walk plan via AskUserQuestion}
     CP2 -->|refine task| P4
     CP2 -->|change decision| P2
@@ -287,14 +329,19 @@ Source of truth lives at `~/gits/plan-modes/deep-plan/`. After running `install.
 │   │   └── finalize_plan.py                    # Phase 5 mirror to harness path + validation
 │   └── references/
 │       ├── phase-prompts.md                    # per-phase prompt fragments quoted by SKILL.md
-│       ├── perspectives.md                     # catalog for dp-plan-perspective
+│       ├── perspectives.md                     # the six synthesis lenses, swept in-turn
+│       ├── readability-principles.md           # cluster source: narrative artifact readability
+│       ├── plan-integrity-principles.md        # cluster source: plan structural soundness
 │       └── plan-file-template.md               # markdown skeleton with formatting rules
 └── agents/
     ├── dp-explore-codebase.md
     ├── dp-research-shallow.md
     ├── dp-research-deep.md
     ├── dp-source-ingest.md
-    └── dp-plan-perspective.md
+    ├── dp-design-critic.md
+    ├── dp-test-critic.md
+    ├── dp-readability-critic.md
+    └── dp-implement-task.md                    # the only writable agent (execute time)
 
 ~/.claude/                                      # Claude Code discovery + runtime data
 ├── skills/deep-plan -> ~/gits/plan-modes/deep-plan/skills/deep-plan       # symlink (created by install.py)
@@ -302,7 +349,7 @@ Source of truth lives at `~/gits/plan-modes/deep-plan/`. After running `install.
 ├── agents/dp-research-shallow.md -> ...        # one symlink per agent
 ├── agents/dp-research-deep.md -> ...
 ├── agents/dp-source-ingest.md -> ...
-├── agents/dp-plan-perspective.md -> ...
+├── agents/dp-implement-task.md -> ...
 └── deep-plan/                                  # runtime, never symlinked, not git-tracked
     ├── projects.json                           # persistent project -> plans_dir map
     ├── hook-errors.log                         # append-only log for hook exceptions
@@ -320,7 +367,8 @@ All paths below are relative to `~/gits/plan-modes/deep-plan/` unless prefixed w
 | `install.py` | Pure-stdlib Python script. Creates `~/.claude/skills/deep-plan` symlink, 5 `~/.claude/agents/dp-*.md` symlinks, ensures `~/.claude/deep-plan/state/` exists, validates hook scripts are executable. Idempotent; safe to re-run. Prints what it did. |
 | `skills/deep-plan/SKILL.md` | Entry point. Frontmatter declares triggers, scoped hooks (referenced via `${CLAUDE_SKILL_DIR}/hooks/...`), allowed-tools, `disable-model-invocation: true`. Body is the 6-phase orchestration prompt with embedded reminders. |
 | `skills/deep-plan/references/phase-prompts.md` | Per-phase prompt fragments the orchestrator quotes into context. |
-| `skills/deep-plan/references/perspectives.md` | Catalog of perspectives for `dp-plan-perspective` (simplicity, performance, maintainability, minimal-diff, security). |
+| `skills/deep-plan/references/perspectives.md` | The six synthesis lenses (simplicity, performance, maintainability, minimal-diff, security, deep-modules) as a checklist the Phase 4.3 synthesis turn sweeps in-turn. |
+| `skills/deep-plan/references/plan-integrity-principles.md` | Cluster source for the plan-structure checks (unscheduled work, wrong `Depends on`, untested code tasks, contradicted decisions, unverified claims), carried by `dp-readability-critic`. |
 | `skills/deep-plan/references/plan-file-template.md` | Markdown skeleton the orchestrator fills in. Section headers, formatting rules, TDD criteria template. |
 | `skills/deep-plan/scripts/setup_session.py` | Bootstrap helper. Resolves `git rev-parse --show-toplevel`, reads `projects.json`, writes `state/<session_id>.json`. Pure stdlib, mypy strict, ruff-clean. |
 | `skills/deep-plan/scripts/resolve_slug.py` | Normalises orchestrator-suggested slug, checks for collision in `plans_dir`, returns accepted slug or collision metadata for `AskUserQuestion`. |
@@ -331,7 +379,7 @@ All paths below are relative to `~/gits/plan-modes/deep-plan/` unless prefixed w
 | `agents/dp-research-shallow.md` | Light web research subagent (haiku). |
 | `agents/dp-research-deep.md` | Per-decision deep web research subagent (sonnet). |
 | `agents/dp-source-ingest.md` | User-source ingestion subagent (sonnet, can call `jira:jira-read-ticket`). |
-| `agents/dp-plan-perspective.md` | Plan synthesis perspective subagent (inherit). |
+| `agents/dp-implement-task.md` | Per-task implementer (inherit model and effort). The only writable agent: owns one task's whole increment behind a four-scalar input and a six-line return contract, runs its own nested critic fleets, denies `Workflow`. |
 | `~/.claude/deep-plan/projects.json` | Persistent map: `{project_root_abs_path: {plans_dir, last_used_at}}`. Runtime, not git-tracked. |
 | `~/.claude/deep-plan/state/<session_id>.json` | Per-session state. Created by `setup_session.py`, deleted by `cleanup.py`. |
 | `~/.claude/deep-plan/hook-errors.log` | Append-only log for hook script exceptions. |
@@ -529,8 +577,8 @@ Three sequential `AskUserQuestion` calls. Plan slug becomes `rate-limiter-redis-
    - Run `python3 ~/.claude/skills/deep-plan/scripts/resolve_slug.py --slug <s> --plans-dir <d>`. Returns either accepted slug or collision metadata.
 2. **Collision handling** (Section "Slug generation" below).
 3. **Update state**: `setup_session.py --update custom_plan_path=<plans_dir>/<slug>.md`. Hook now allows writes to that path.
-4. **Perspective fan-out**: launch 1 to 3 `dp-plan-perspective` agents (inherit, parallel) with different perspectives picked from `{simplicity, performance, maintainability, minimal-diff, security}` based on the user's evident priorities (inferred from prompt and decisions). Cap at 3.
-5. **Synthesis**: orchestrator merges perspectives into a single plan body following the format in Section "Plan file format" below. Merge rule: when perspectives disagree on task ordering or test scope, prefer the union (additive); when they disagree on architectural choice, that means a sub-decision was missed and it loops back to Phase 2.
+4. **Synthesis lenses**: no agents. The orchestrator drafts the plan body once, then walks the `## Synthesis checklist` of `references/perspectives.md` one lens at a time, amending in place. 1 to 3 lenses get real scrutiny based on the user's evident priorities (inferred from prompt and decisions); `deep-modules` is always swept last, because it reshapes task boundaries rather than task contents.
+5. **Merge rules**: the body follows the format in Section "Plan file format" below. When two lenses pull opposite ways on task ordering or test scope, prefer the union (additive); when they pull opposite ways on an architectural choice, that means a sub-decision was missed and it loops back to Phase 2.
 6. **Verification probes**: for each task, the orchestrator runs inline `Bash` checks against design assumptions. Examples: `python3 -c "import redis; print(redis.__version__)"`, `grep -rl 'TokenBucket' src/`, `uv run pytest --collect-only tests/middleware/`. Each probe's output is captured into the plan's `## Verification probes` appendix as `[probe N]: <command>\n<stdout>\n`. Probes run sequentially to keep output ordering deterministic. If a probe needs to write a small fixture file (e.g. a tiny pytest), it writes under the sandbox; the hook permits this (Section "Verification mechanic" below).
 
 **Produces**: complete plan file at `custom_plan_path`, ready for review.
@@ -586,7 +634,7 @@ Detailed under Phase 2 above. Summary of design choices:
 
 | Question | Choice | Rationale |
 |---|---|---|
-| Generated by orchestrator or subagent? | Orchestrator (inline) | Phase 1 evidence already in context; subagent latency hurts; subagents cannot delegate further. |
+| Generated by orchestrator or subagent? | Orchestrator (inline) | Phase 1 evidence already in context, and subagent latency hurts. A latency choice, not a capability limit: nested agents do work. |
 | Sequential or batched? | Sequential, dependency-ordered | Decisions are conditional; batched questions encourage skimming. |
 | Where persisted? | Plan file's `## Decisions made` table | Single source of truth; survives re-entry; AI-consumable. |
 | Cap? | 5 surfaced decisions per plan | Anything above cap is deferred to a follow-up plan. |
@@ -595,7 +643,7 @@ Detailed under Phase 2 above. Summary of design choices:
 
 All five agents share:
 - `=== CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===` opening header (mirrors existing Explore/Plan agents).
-- Implicit denylist `Agent, ExitPlanMode, Edit, Write, NotebookEdit` (subagents cannot have these even if listed; redundancy by tool allowlisting).
+- Implicit denylist `Agent, ExitPlanMode, Edit, Write, NotebookEdit` (redundancy by tool allowlisting). Note these tools *are* available to subagents that do not deny them -- `dp-implement-task` uses `Agent`, `Edit`, and `Write` -- so the denial is what makes an agent read-only, not a harness restriction.
 - Output as a regular message to the orchestrator; never write files.
 
 #### dp-explore-codebase
@@ -712,31 +760,36 @@ System prompt body excerpt:
 >
 > Output sections: `## Explicit requirements`, `## Implicit requirements`, `## Hard constraints` (verbatim "do NOT" instructions), `## Unreadable sources` (path + error reason). Quote the user where possible. Never fabricate content.
 
-#### dp-plan-perspective
+#### dp-implement-task
+
+The one writable agent, and the only one whose frontmatter differs in kind from the rest:
 
 ```yaml
 ---
-name: dp-plan-perspective
+name: dp-implement-task
 description: |
-  Drafts a perspective-flavoured implementation plan section (simplicity, performance,
-  maintainability, minimal-diff, security). Used in Phase 4 fan-out. Read-only.
+  Implements exactly one task of an approved /deep-plan plan, test-first, in a
+  fresh context. The only writable agent in this plugin.
 model: inherit
-tools: Read, Grep, Glob, Bash
+effort: inherit
+maxTurns: 120
+disallowedTools: Workflow, ExitPlanMode
 ---
 ```
 
+Note what is deliberately absent. There is no `tools:` allowlist, because an allowlist would strip ambient MCP access; the parenthesised `Agent(type)` allowlist form is silently ignored inside a subagent definition anyway. There is no `permissionMode`, `hooks`, or `mcpServers`, because the harness ignores all three on plugin-bundled agents. `Workflow` is denied so the nested fleet takes the plain-`Agent` fallback path, since `workflow()` nesting is capped at one level.
+
 System prompt body excerpt:
 
-> You are a planning perspective specialist for /deep-plan.
+> You implement ONE task of an approved plan and return a six-line summary.
 >
-> === CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===
-> Same prohibitions. Bash is permitted only for read-only inspection (`ls`, `cat`, `grep`, `find`, `git log/diff/status`).
+> Fetch your own task body with `load_tasks.py --plan <p> --task <n>`; no field of the plan grammar is re-typed into your prompt.
 >
-> Input: user's request, Phase 1 evidence, resolved decisions, and your assigned perspective (one of: simplicity, performance, maintainability, minimal-diff, security).
+> Write the test named in `Tests (TDD)` first, prove red, implement against `Target files` only, prove green, `git add -N .` before collecting `git diff <baseline> -- <target files>`, run the nested fleets with `run_in_background: false`, fix material findings, re-run verification for stability, then append the `### Task {N}` note to the plan folder's `design.md`.
 >
-> Output a draft `## Tasks` block in the format defined by the orchestrator (Task N -> Target files / Change / Tests (TDD) / Verification / Depends on). Apply your perspective consistently. Do NOT write the plan file yourself; return the markdown to the orchestrator.
+> Touch only `Target files` plus that `design.md`. Never commit, never edit `plan.md`, never change permission settings to reduce prompting. Return `blocked` rather than widening scope.
 
-Output format: a `## Tasks` markdown block following the plan-file task subschema below, plus a `## Perspective notes` paragraph.
+Output format: exactly six lines (`files`, `verification`, `material`, `minor`, `deviations`, `status`). Diff text, critic finding text, test output, and turn counts are explicitly forbidden upward — the dispatcher's freedom from them is the entire point of the delegation.
 
 ### System reminders
 
@@ -1149,7 +1202,7 @@ User answers each via `AskUserQuestion`. Decisions appear in plan file's `## Dec
 
 **Phase 3**: one `dp-research-deep` agent for the chosen library. Returns dossier with version constraints and gotchas.
 
-**Phase 4**: 1 to 2 `dp-plan-perspective` agents (probably `simplicity` + `maintainability`). Orchestrator synthesises 2 to 3 tasks. Verification probes run: `python3 -c "import fastapi; print(fastapi.__version__)"`, `grep -rl 'add_api_route' src/`, etc. Outputs go into `## Verification probes` appendix.
+**Phase 4**: the orchestrator drafts 2 to 3 tasks and sweeps the lenses in-turn, emphasising `simplicity` and `maintainability`. Verification probes run: `python3 -c "import fastapi; print(fastapi.__version__)"`, `grep -rl 'add_api_route' src/`, etc. Outputs go into `## Verification probes` appendix.
 
 **Checkpoint 2**: AskUserQuestion offers approve/refine/etc. User picks approve.
 
@@ -1209,7 +1262,7 @@ After `ExitPlanMode` approval:
 
 - Stronger Bash sandbox using `bwrap` or `firejail`. v1 uses regex + prompt; the seam is documented.
 - Plugin migration if versioning becomes a need. Mechanical transplant; deferred.
-- Per-decision web-research budget overrides via `/deep-plan --depth shallow|standard|exhaustive`.
+- Per-decision web-research budget overrides. A global depth argument was tried and removed (`## Retired designs`); anything reintroduced here should be per-decision and evidence-driven, not a mode the caller must remember to pass.
 - Soft enforcement of interactivity via a PreToolUse hook that counts `AskUserQuestion` calls before allowing `## Decisions made` table writes.
 - Sharing plans across projects (a "templates" feature). Out of scope.
 

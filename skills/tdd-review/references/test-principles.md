@@ -79,7 +79,7 @@ The four H2 headings above and the four-cluster H3 structure under "Review-time 
 
 - `skills/tdd-review/SKILL.md` (standalone review: all four red-flag clusters)
 - `skills/deep-plan/references/plan-file-template.md` (Tests block schema: plan-time authoring rules)
-- `agents/dp-plan-perspective.md` and `skills/deep-plan/references/perspectives.md` (perspective drafts: plan-time authoring rules)
+- `skills/deep-plan/references/perspectives.md` (plan synthesis lenses: plan-time authoring rules)
 - `agents/dp-test-critic.md` (receives one red-flag cluster per instance, quoted by the caller)
 - `skills/design-review/references/fleet-orchestration.md` (fleet recipe: pairs dp-test-critic with this file's clusters)
 - `skills/deep-plan/SKILL.md` and `skills/deep-plan/references/phase-prompts.md` (Phase 4.4 synthesis: plan-time authoring rules; Phase 4.6: red-flag clusters)

@@ -21,12 +21,27 @@ ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = ROOT / "skills" / "deep-plan" / "scripts"
 TEST_PRINCIPLES = ROOT / "skills" / "tdd-review" / "references" / "test-principles.md"
 TDD_REVIEW_SKILL = ROOT / "skills" / "tdd-review" / "SKILL.md"
-PERSPECTIVE_AGENT = ROOT / "agents" / "dp-plan-perspective.md"
 PERSPECTIVES = ROOT / "skills" / "deep-plan" / "references" / "perspectives.md"
 DEEP_PLAN_SKILL = ROOT / "skills" / "deep-plan" / "SKILL.md"
 PHASE_PROMPTS = ROOT / "skills" / "deep-plan" / "references" / "phase-prompts.md"
-PLAN_CRITIC = ROOT / "agents" / "dp-plan-critic.md"
 EXECUTE_SKILL = ROOT / "skills" / "deep-plan-execute" / "SKILL.md"
+
+# The synthesis lenses, all six of which the synthesis turn sweeps in-turn.
+LENSES = (
+    "simplicity",
+    "performance",
+    "maintainability",
+    "minimal-diff",
+    "security",
+    "deep-modules",
+)
+
+# perspectives.md is asserted on from two skills' contract tests; its own
+# registry section must name both so an edit there cannot orphan a pin.
+PERSPECTIVES_PINNING_TESTS = (
+    "skills/tdd-review/tests/test_test_principles_contract.py",
+    "skills/design-review/tests/test_design_review_contract.py",
+)
 
 PRINCIPLES_H2 = (
     "## Plan-time authoring rules",
@@ -127,18 +142,26 @@ def test_tdd_review_skill_contract() -> None:
         assert pointer in body, f"tdd-review SKILL.md body missing pointer {pointer!r}"
 
 
-def test_perspective_agent_drafts_full_tests_schema() -> None:
-    agent_text = PERSPECTIVE_AGENT.read_text()
-    # Labels come from finalize_plan.TESTS_FIELDS (never re-typed here) so the
-    # perspective drafts cannot omit fields the template requires.
-    for label in finalize.TESTS_FIELDS:
-        assert f"- {label}:" in agent_text, (
-            f"dp-plan-perspective.md output format missing a '- {label}:' bullet"
-        )
-    for path in (PERSPECTIVE_AGENT, PERSPECTIVES):
-        assert "tdd-review/references/test-principles.md" in path.read_text(), (
-            f"{path.name} must point Tests-block authoring at the tdd-review rubric path"
-        )
+def test_lens_catalogue_is_a_synthesis_checklist() -> None:
+    # The lenses are swept inside the synthesis turn, not drafted by a fan-out
+    # of agents, so the catalogue must read as a checklist one reader walks.
+    # Nine-field Tests coverage is NOT asserted here: test_template_contract.py
+    # owns it against references/plan-file-template.md, in TESTS_FIELDS order.
+    text = PERSPECTIVES.read_text()
+
+    checklist = _section(text, "## Synthesis checklist")
+    assert checklist, "perspectives.md must carry a '## Synthesis checklist' section"
+    for lens in LENSES:
+        assert lens in checklist, f"synthesis checklist missing the {lens!r} lens"
+
+    registry = _section(text, "## How to update these guidelines")
+    assert registry, "perspectives.md must carry a '## How to update these guidelines' section"
+    for pinning in PERSPECTIVES_PINNING_TESTS:
+        assert pinning in registry, f"perspectives.md registry missing pinning test {pinning!r}"
+
+    assert "tdd-review/references/test-principles.md" in text, (
+        "perspectives.md must point Tests-block authoring at the tdd-review rubric path"
+    )
 
 
 def test_phase46_launches_test_critic_fleet() -> None:
@@ -153,33 +176,38 @@ def test_phase46_launches_test_critic_fleet() -> None:
     assert "dp-test-critic" in PHASE_PROMPTS.read_text(), (
         "phase-prompts.md must mirror the Phase 4.6 test fleet"
     )
-    assert "dp-test-critic" in PLAN_CRITIC.read_text(), (
-        "dp-plan-critic.md must delegate test-quality judgment to the dp-test-critic fleet"
+    # Test-quality judgment stays with the dp-test-critic fleet: the plan-integrity
+    # cluster that replaced the standalone critic checks Tests-block *structure* only.
+    integrity = ROOT / "skills" / "deep-plan" / "references" / "plan-integrity-principles.md"
+    assert "dp-test-critic" in integrity.read_text(), (
+        "plan-integrity-principles.md must defer test-quality judgment to the dp-test-critic fleet"
     )
 
 
 def test_execute_loop_quotes_run_rules_and_rechecks_stability() -> None:
-    text = EXECUTE_SKILL.read_text()
+    # The per-task loop, and with it the run rules and the stability re-run, now
+    # live in the implementer agent. The agent reads the rule sections itself
+    # instead of having the dispatcher quote them into a prompt.
+    agent = (ROOT / "agents" / "dp-implement-task.md").read_text()
     for needle in (
         "tdd-review/references/test-principles.md",
         "dp-test-critic",
         "Execute-time run rules",
         "Execute-time craft rules",
     ):
-        assert needle in text, f"deep-plan-execute SKILL.md must reference {needle!r}"
+        assert needle in agent, f"dp-implement-task.md must reference {needle!r}"
 
-    # Ordering anchors: each occurs exactly once in Step 5 (unlike the
-    # run-the-verification wording, which appears in both the red and green
-    # steps), so the stability re-run is pinned between the post-task fleet
-    # review and completion.
-    fleet_anchor = "Design-review the task's diff."
-    stability_anchor = "re-run the task's `verification` command once more"
-    completed_anchor = "mark the task `completed` via `TaskUpdate`"
-    for anchor in (fleet_anchor, completed_anchor):
-        assert text.count(anchor) == 1, f"ordering anchor {anchor!r} must occur exactly once"
-    assert stability_anchor in text, "the post-green stability re-run sentence is missing"
-    assert text.index(fleet_anchor) < text.index(stability_anchor) < text.index(completed_anchor), (
-        "stability re-run must sit after the post-task fleet review and before completion"
+    # Ordering: red before green, and the stability re-run after green.
+    red_pos = agent.index("Prove red")
+    green_pos = agent.index("Prove green")
+    stability_pos = agent.index("Re-run `verification`")
+    assert red_pos < green_pos < stability_pos, (
+        "dp-implement-task.md: the loop must run red, then green, then the "
+        f"stability re-run (found {red_pos}, {green_pos}, {stability_pos})"
+    )
+
+    assert "stability finding" in agent, (
+        "a second-run failure must be named a stability finding that blocks completion"
     )
 
 

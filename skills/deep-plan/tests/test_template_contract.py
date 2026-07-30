@@ -19,7 +19,6 @@ ROOT = Path(__file__).resolve().parent.parent  # skills/deep-plan
 SCRIPTS = ROOT / "scripts"
 TEMPLATE = ROOT / "references" / "plan-file-template.md"
 GOLDEN = Path(__file__).resolve().parent / "golden" / "example-plan.md"
-PERSPECTIVE = Path(__file__).resolve().parents[3] / "agents" / "dp-plan-perspective.md"
 
 REQUIRED = [
     "## Context",
@@ -125,13 +124,6 @@ def test_template_declares_decisions_index_and_change_shape() -> None:
     )
     assert "Canonical snippet" not in text, (
         "the retired dossier section list must not survive in the template"
-    )
-
-    # The perspective agent drafts Change blocks in the same shape.
-    perspective = PERSPECTIVE.read_text()
-    assert "structured sub-bullets" in perspective, (
-        "dp-plan-perspective.md output format must mirror the "
-        "summary-sentence-then-sub-bullets Change rule"
     )
 
     # The golden plan exercises the house style: an indexed decision row and a
