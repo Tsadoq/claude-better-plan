@@ -1,12 +1,10 @@
 ---
 name: design-review
 description: |
-  Standalone design review of code, diffs, or plan files by a parallel
-  critic fleet: one small-model critic per red-flag cluster (module depth,
-  information hiding, naming, comments), then adversarial verification.
-  Use when the user asks to "design-review" something, review design
-  quality, check for shallow modules or information leakage, or audit a
-  diff or plan against design principles.
+  Use when the user asks to design-review code, a diff, or a plan file, or to
+  check for shallow modules, leaked implementation detail, unclear names, or
+  missing comments. A parallel critic fleet reviews it, then verifies each
+  finding adversarially.
 argument-hint: "[path | git ref | plan-file]"
 ---
 
@@ -35,9 +33,11 @@ have no Bash).
 ## Step 2: Run the critic fleet
 
 Run the fleet exactly as specified in
-`references/fleet-orchestration.md`: one finder per H3 cluster under
-`## Review-time red flags` in `references/design-principles.md` (quote each
-cluster's questions verbatim into its finder prompt), dedup, then the
+`references/fleet-orchestration.md` with `agentType: deep-plan:dp-critic` and
+`references/design-principles.md` as the cluster source: one finder per H3
+cluster under `## Review-time red flags` in that file (quote each cluster's
+questions verbatim into its finder prompt, and name the file itself — that is
+what points an otherwise generic critic at design quality), dedup, then the
 adversarial verify stage. Use the Workflow path when available; on absence,
 denial, or error, switch to the fallback without asking.
 

@@ -1,14 +1,9 @@
 ---
 name: tdd-review
 description: |
-  Standalone review of the Tests (TDD) blocks in a plan produced by
-  /deep-plan, run by a parallel critic fleet: one small-model test critic
-  per red-flag cluster (assertions and failure output, test doubles and
-  seams, fixtures and setup, test level and duplication), then adversarial
-  verification. Use when the user asks to review planned tests, check TDD
-  quality, or assess assertions, doubles, fixtures, or flaky-test craft in
-  a deep-plan plan file. Not for reviewing diffs, pull requests, or
-  already-implemented code.
+  Use when the user asks to review the planned tests in a /deep-plan plan file:
+  their assertions, doubles, fixtures, level, or flake risk. Reads the plan's
+  Tests (TDD) blocks only -- not diffs, pull requests, or implemented code.
 argument-hint: "[plan-file]"
 ---
 
@@ -36,11 +31,13 @@ no Bash).
 
 Run the fleet exactly as specified in
 `references/fleet-orchestration.md` (under the design-review skill) with
-`agentType: deep-plan:dp-test-critic`: one finder per H3 cluster under
-`## Review-time red flags` in `references/test-principles.md` (quote each
-cluster's questions verbatim into its finder prompt), dedup, then the
-adversarial verify stage. Use the Workflow path when available; on absence,
-denial, or error, switch to the fallback without asking.
+`agentType: deep-plan:dp-critic` and `references/test-principles.md` as the
+cluster source: one finder per H3 cluster under `## Review-time red flags` in
+that file (quote each cluster's questions verbatim into its finder prompt,
+and name the file itself — that is what points an otherwise generic critic at
+test quality), dedup, then the adversarial verify stage. Use the Workflow path
+when available; on absence, denial, or error, switch to the fallback without
+asking.
 
 ## Step 3: Report
 

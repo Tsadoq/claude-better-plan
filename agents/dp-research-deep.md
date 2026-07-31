@@ -1,9 +1,9 @@
 ---
 name: dp-research-deep
 description: |
-  Deep-plan focused research for a single chosen option. Reads official docs,
-  validates the approach, surfaces gotchas and version constraints, returns
-  a citation-rich dossier. Read-only. Used in Phase 3 of /deep-plan.
+  Launch per chosen option to validate it against official documentation:
+  gotchas, version constraints, and a citation-rich dossier a plan can quote.
+  Read-only.
 model: sonnet
 disallowedTools: Write, Edit, NotebookEdit, Bash, Agent, ExitPlanMode
 ---

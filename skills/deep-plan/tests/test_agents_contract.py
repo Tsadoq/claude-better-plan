@@ -8,6 +8,14 @@ no shell write vector at all. Plugin-bundled agents may not set
 `permissionMode`, `hooks`, or `mcpServers` (the harness ignores them), so the
 agents must not declare those fields either.
 
+The exception is the critic leaf: because one `dp-critic` now serves four
+cluster sources, its *exact* profile -- one agent file, `model: haiku`, and a
+denial set that is neither wider nor narrower than the three merged
+predecessors shared -- is pinned by
+`test_exactly_one_critic_agent_with_the_shared_profile` in
+`tests/test_guarantees.py`. The checks below stay general, and every agent
+including the critic passes through them.
+
 Runnable two ways:
     python3 skills/deep-plan/tests/test_agents_contract.py
     python3 -m pytest skills/deep-plan/tests/test_agents_contract.py
@@ -26,7 +34,7 @@ DEEP_PLAN = Path(__file__).resolve().parents[1]  # skills/deep-plan
 # dispatcher's scope audit plus the `Workflow` denial, not a tool block.
 WRITABLE = {"dp-implement-task"}
 
-# Research agents and the critic fleet leaves have no legitimate need for
+# Research agents and the critic fleet leaf have no legitimate need for
 # Bash, so they block it outright and become genuinely write-free.
 # `dp-explore-codebase` keeps it for read-only inspection, and the writable
 # implementer needs it to run the task's verification command.
@@ -34,9 +42,7 @@ BASH_FREE = {
     "dp-research-shallow",
     "dp-research-deep",
     "dp-source-ingest",
-    "dp-design-critic",
-    "dp-test-critic",
-    "dp-readability-critic",
+    "dp-critic",
 }
 
 WRITE_TOOLS = {"Write", "Edit", "NotebookEdit"}
@@ -191,22 +197,6 @@ def test_no_false_harness_claims() -> None:
     assert not offenders, "false harness claims survive:\n" + "\n".join(offenders)
 
 
-def test_design_critic_agent_present() -> None:
-    path = AGENTS_DIR / "dp-design-critic.md"
-    assert path.exists(), f"missing design critic agent: {path}"
-    fm = _frontmatter(path.read_text())
-    assert fm, f"{path.name}: missing frontmatter"
-
-    assert not _has_tools_allowlist(fm), (
-        f"{path.name}: declares a `tools:` allowlist, which strips ambient MCP access"
-    )
-
-    disallowed = _disallowed_tools(fm)
-    required = WRITE_TOOLS | {"Bash", "Agent"}
-    missing = required - disallowed
-    assert not missing, f"{path.name}: disallowedTools missing {sorted(missing)}"
-
-
 def _phase3_region(text: str, source: str) -> str:
     start = text.find("## Phase 3")
     end = text.find("## Phase 4")
@@ -253,44 +243,6 @@ def test_research_deep_dossier_format() -> None:
     assert "The question" in fragment, (
         "phase-prompts.md must brief the plan-integrity run on the question-first "
         "dossier labels now that the standalone critic is gone"
-    )
-
-
-def test_test_critic_agent_present() -> None:
-    path = AGENTS_DIR / "dp-test-critic.md"
-    assert path.exists(), f"missing test critic agent: {path}"
-    fm = _frontmatter(path.read_text())
-    assert fm, f"{path.name}: missing frontmatter"
-
-    assert not _has_tools_allowlist(fm), (
-        f"{path.name}: declares a `tools:` allowlist, which strips ambient MCP access"
-    )
-
-    disallowed = _disallowed_tools(fm)
-    required = WRITE_TOOLS | {"Bash", "Agent"}
-    missing = required - disallowed
-    assert not missing, f"{path.name}: disallowedTools missing {sorted(missing)}"
-
-    assert "dp-test-critic" in BASH_FREE, "dp-test-critic must be registered bash-free"
-
-
-def test_readability_critic_agent_present() -> None:
-    path = AGENTS_DIR / "dp-readability-critic.md"
-    assert path.exists(), f"missing readability critic agent: {path}"
-    fm = _frontmatter(path.read_text())
-    assert fm, f"{path.name}: missing frontmatter"
-
-    assert not _has_tools_allowlist(fm), (
-        f"{path.name}: declares a `tools:` allowlist, which strips ambient MCP access"
-    )
-
-    disallowed = _disallowed_tools(fm)
-    required = WRITE_TOOLS | {"Bash", "Agent"}
-    missing = required - disallowed
-    assert not missing, f"{path.name}: disallowedTools missing {sorted(missing)}"
-
-    assert "dp-readability-critic" in BASH_FREE, (
-        "dp-readability-critic must be registered bash-free"
     )
 
 

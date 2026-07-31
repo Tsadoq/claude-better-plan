@@ -1,13 +1,9 @@
 ---
 name: dp-implement-task
 description: |
-  Implements exactly one task of an approved /deep-plan plan, test-first, in a
-  fresh context: writes the failing test, proves red, implements, proves green,
-  runs its own nested design and test critic fleets over the task diff, fixes
-  material findings, and appends the task's implementation note. The only
-  writable agent in this plugin. Launched once per task by
-  /deep-plan:deep-plan-execute, which audits its diff against the task's
-  Target files afterwards.
+  Launch once per task of an approved /deep-plan plan to build that task in a
+  fresh context: failing test first, then implementation, then its own critic
+  fleet over the diff. The only writable agent in this plugin.
 model: inherit
 effort: inherit
 maxTurns: 120
@@ -89,10 +85,11 @@ Run the design and test critic fleets over the diff text per
 - Take the recipe's `## Fallback` path. Do not attempt the Workflow path; `Workflow`
   is denied to you because its nesting is capped at one level.
 
-One finder per red-flag cluster: `deep-plan:dp-design-critic` against
-`design-principles.md`, and `deep-plan:dp-test-critic` against the `## Review-time red
-flags` clusters of `test-principles.md`. Pass the diff as text -- the critics have no
-Bash and cannot read it from disk.
+One finder per red-flag cluster under `## Review-time red flags`, all of type
+`deep-plan:dp-critic`: one fleet with `design-principles.md` as its cluster source and
+one with `test-principles.md`. Name the source file in every prompt -- the leaf carries
+no rubric, so that path is the only thing separating a design finder from a test one.
+Pass the diff as text -- the critics have no Bash and cannot read it from disk.
 
 Never launch a writable agent type, and never launch another `dp-implement-task`.
 If an agent type fails to resolve, degrade to reviewing the diff yourself against the

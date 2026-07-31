@@ -1,8 +1,10 @@
 """Guards the architecture.md reference template's required shape.
 
 architecture.md is the conditional plan-folder member for architecturally
-significant plans. The template owns both the shape (Today / After this plan)
-and the write-or-skip rubric Phase 4.4 quotes, so this test pins both.
+significant plans. This test pins the template's two-section spine and the
+layout constant finalize_plan.py writes it by; what the template must *say*
+(its diagram fence, significance skip-list and seam rule) is pinned by
+tests/guarantees.py under the `architecture-md-template.*` ids.
 
 Runnable two ways:
     python3 skills/deep-plan/tests/test_architecture_md_contract.py
@@ -40,16 +42,6 @@ def test_architecture_template_required_sections() -> None:
     assert after != -1, "'## After this plan' section missing from architecture-md-template.md"
     assert today < after, "'## Today' must precede '## After this plan'"
 
-    assert "```mermaid" in text, (
-        "the skeleton must carry a container/component-level mermaid fence"
-    )
-    assert "reversible" in text, (
-        "the significance test must carry its skip-list "
-        "(e.g. 'reversible within a sprint')"
-    )
-    assert "design.md" in text, (
-        "the seam rule must name design.md as where decision rationale stays"
-    )
     assert finalize.ARCHITECTURE_FILE_NAME == "architecture.md", (
         "finalize_plan.py must carry the architecture.md layout constant"
     )

@@ -1,10 +1,8 @@
 ---
 name: dp-source-ingest
 description: |
-  Deep-plan ingestor for user-provided source material. Handles local file
-  paths, URLs, Jira ticket IDs (calls jira:jira-read-ticket via Skill), and
-  inline pasted text. Summarises into actionable constraints. Read-only.
-  Used in Phase 1 of /deep-plan when the user supplies sources.
+  Launch per source the user supplies -- a file path, a URL, a Jira ticket id,
+  or pasted text -- and get back the constraints it imposes. Read-only.
 model: sonnet
 disallowedTools: Write, Edit, NotebookEdit, Bash, Agent, ExitPlanMode
 ---

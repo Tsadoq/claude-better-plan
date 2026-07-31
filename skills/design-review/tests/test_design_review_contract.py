@@ -1,9 +1,11 @@
-"""Contract test: the design-review guideline content and its wiring.
+"""Contract test: the design-review guideline's shape and its fleet wiring.
 
-Pins the structure of skills/design-review/references/design-principles.md
-(the single source of truth for design guidance) so orchestrators that quote
-its sections by heading never silently break. Stdlib only, so CI does not
-need pyyaml.
+Pins what a substring cannot express about
+skills/design-review/references/design-principles.md and its callers: the
+red-flag cluster count a critic is split along, the consumer registry that
+keeps this test findable, and which critic type each Phase 4.6 site launches.
+The guideline's H2 spine and every path citation are pinned instead by
+tests/guarantees.py. Stdlib only, so CI does not need pyyaml.
 
 Runnable two ways:
     python3 skills/design-review/tests/test_design_review_contract.py
@@ -22,15 +24,6 @@ DESIGN_REVIEW_SKILL = ROOT / "skills" / "design-review" / "SKILL.md"
 DEEP_PLAN_SKILL = ROOT / "skills" / "deep-plan" / "SKILL.md"
 PERSPECTIVES = ROOT / "skills" / "deep-plan" / "references" / "perspectives.md"
 PHASE_PROMPTS = ROOT / "skills" / "deep-plan" / "references" / "phase-prompts.md"
-EXECUTE_SKILL = ROOT / "skills" / "deep-plan-execute" / "SKILL.md"
-
-PRINCIPLES_H2 = (
-    "## Attribution and scope",
-    "## Plan-time principles",
-    "## Review-time red flags",
-    "## Execute-time craft rules",
-    "## How to update these guidelines",
-)
 
 
 def _section(text: str, heading: str) -> str:
@@ -45,9 +38,6 @@ def _section(text: str, heading: str) -> str:
 def test_design_principles_structure() -> None:
     assert DESIGN_PRINCIPLES.exists(), f"missing guideline file: {DESIGN_PRINCIPLES}"
     text = DESIGN_PRINCIPLES.read_text()
-
-    for heading in PRINCIPLES_H2:
-        assert heading in text, f"design-principles.md missing section {heading!r}"
 
     red_flags = _section(text, "## Review-time red flags")
     clusters = [line for line in red_flags.splitlines() if line.startswith("### ")]
@@ -74,47 +64,24 @@ def test_registry_names_colocated_pinning_test() -> None:
     )
 
 
-def test_fleet_orchestration_contract() -> None:
+def test_fleet_recipe_is_cluster_source_parametric() -> None:
+    # There is one critic type now, so the recipe's parametricity has moved from
+    # the agent to the cluster source: `args.source` is what makes an identical
+    # leaf hunt design flaws on one run and test flaws on the next. guarantees.py
+    # pins that all four principles files are paired here; what this adds is that
+    # the source actually reaches the finder, rather than being documented above
+    # a script that drops it.
     assert FLEET_ORCHESTRATION.exists(), f"missing fleet spec: {FLEET_ORCHESTRATION}"
-    text = FLEET_ORCHESTRATION.read_text()
-
-    assert "2.1.154" in text, "fleet spec must document the Workflow version floor 2.1.154"
-    assert "## Fallback" in text, "fleet spec must carry a `## Fallback` section"
-    for token in ("material", "minor"):
-        assert token in text, f"fleet spec missing severity token {token!r}"
-    assert any(line.startswith("Probe status:") for line in text.splitlines()), (
-        "fleet spec must carry a `Probe status:` marker line"
+    recipe = FLEET_ORCHESTRATION.read_text()
+    assert "args.source" in recipe, (
+        "fleet-orchestration.md must thread the caller's cluster source into the "
+        "finder prompts as args.source; a leaf launched without it has no rubric"
     )
 
 
-def test_fleet_recipe_is_critic_parametric() -> None:
-    text = FLEET_ORCHESTRATION.read_text()
-
-    assert "args.agentType" in text, (
-        "the Workflow script must read the critic type from args.agentType"
-    )
-    for token in ("dp-test-critic", "test-principles.md"):
-        assert token in text, (
-            f"fleet spec must name the test-critic pairing token {token!r}"
-        )
-
-
-def test_fleet_recipe_owns_triage_nesting_and_budget() -> None:
+def test_no_caller_restates_the_session_cap() -> None:
     # Fleet mechanics live in one file. Callers state a target and quote the
     # recipe; they never restate a cap, a gate, or a nesting rule themselves.
-    text = FLEET_ORCHESTRATION.read_text()
-
-    for heading in ("## Triage gate", "## Nested fleets", "## Session agent budget"):
-        assert heading in text, f"fleet-orchestration.md missing section {heading!r}"
-
-    assert "run_in_background: false" in text, (
-        "the nested-fleets section must state the foreground requirement literally: "
-        "a backgrounded subagent fleet returns an acknowledgement, not findings"
-    )
-    assert "CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION" in text, (
-        "the session-budget section must name the cap's env var so a caller can raise it"
-    )
-
     for path in (DEEP_PLAN_SKILL, PHASE_PROMPTS):
         assert "CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION" not in path.read_text(), (
             f"{path.name} restates the session cap; it belongs only in fleet-orchestration.md"
@@ -133,24 +100,12 @@ def test_design_review_skill_contract() -> None:
             f"design-review SKILL.md frontmatter missing {key!r}"
         )
 
-    body = text[end + 4 :]
-    for pointer in ("references/fleet-orchestration.md", "references/design-principles.md"):
-        assert pointer in body, f"design-review SKILL.md body must point at {pointer!r}"
-
 
 def test_deep_modules_perspective_wiring() -> None:
     for path in (PERSPECTIVES, PHASE_PROMPTS):
         assert "deep-modules" in path.read_text(), f"{path}: missing the deep-modules perspective"
     assert "design-principles.md" in PERSPECTIVES.read_text(), (
         "perspectives.md must point the deep-modules frame at design-principles.md"
-    )
-
-    skill = DEEP_PLAN_SKILL.read_text()
-    start = skill.find("### 4.3")
-    end = skill.find("### 4.4")
-    assert start != -1 and end != -1, "deep-plan SKILL.md must keep sections 4.3 and 4.4"
-    assert "deep-modules" in skill[start:end], (
-        "section 4.3 of deep-plan SKILL.md must launch the deep-modules perspective"
     )
 
 
@@ -166,26 +121,9 @@ def test_synthesis_lenses_run_in_the_orchestrator_turn() -> None:
     for needle in ("perspectives.md", "## Synthesis checklist"):
         assert needle in region, f"section 4.3 must point at {needle!r}"
 
-    for banned in ("dp-plan-perspective", "in parallel"):
-        offending = [ln for ln in region.splitlines() if banned in ln]
-        assert not offending, (
-            f"section 4.3 still delegates ({banned!r}): {offending[0].strip()!r}"
-        )
-
-    assert "dp-plan-perspective" not in skill, (
-        "deep-plan SKILL.md must not name dp-plan-perspective anywhere; "
-        f"surviving line: "
-        f"{next(ln.strip() for ln in skill.splitlines() if 'dp-plan-perspective' in ln)!r}"
-    )
-
-
-def test_phase2_design_framing() -> None:
-    skill = DEEP_PLAN_SKILL.read_text()
-    start = skill.find("## Phase 2")
-    end = skill.find("## Phase 3")
-    assert start != -1 and end != -1, "deep-plan SKILL.md must keep Phase 2 and Phase 3 headings"
-    assert "design-principles.md" in skill[start:end], (
-        "Phase 2 of deep-plan SKILL.md must point option generation at design-principles.md"
+    offending = [ln for ln in region.splitlines() if "in parallel" in ln]
+    assert not offending, (
+        f"section 4.3 still delegates the lens sweep: {offending[0].strip()!r}"
     )
 
 
@@ -200,32 +138,26 @@ def test_phase46_design_fleet_wiring() -> None:
     end = skill.find("## Phase 5")
     assert start != -1 and end != -1, "deep-plan SKILL.md must keep Phase 4.6 and Phase 5 headings"
     region = skill[start:end]
-    for needle in ("dp-design-critic", "fleet-orchestration.md"):
-        assert needle in region, f"Phase 4.6 of deep-plan SKILL.md must reference {needle!r}"
+    assert "dp-critic" in region, (
+        "Phase 4.6 of deep-plan SKILL.md must launch the dp-critic fleet"
+    )
+    assert "design-principles.md" in region, (
+        "Phase 4.6 of deep-plan SKILL.md must name the design cluster source; the "
+        "critic leaf has no rubric without it"
+    )
 
-    assert "dp-design-critic" in PHASE_PROMPTS.read_text(), (
+    assert "design-principles.md" in PHASE_PROMPTS.read_text(), (
         "phase-prompts.md must mirror the Phase 4.6 design fleet"
     )
 
 
 def test_execute_post_task_review_wiring() -> None:
     # The post-task fleet moved into the implementer agent, so the diff and the
-    # critic prompts stay in the context that gets discarded. The dispatcher
-    # must NOT name a critic: that would mean it is reviewing diffs itself.
+    # critic prompts stay in the context that gets discarded. guarantees.py pins
+    # that the dispatcher names no critic at all.
     agent = (ROOT / "agents" / "dp-implement-task.md").read_text()
-    for needle in ("dp-design-critic", "dp-test-critic", "fleet-orchestration.md"):
+    for needle in ("deep-plan:dp-critic", "design-principles.md", "test-principles.md"):
         assert needle in agent, f"dp-implement-task.md must reference {needle!r}"
-
-    assert "run_in_background: false" in agent, (
-        "a nested fleet must launch in the foreground; a backgrounded critic "
-        "returns an acknowledgement, not findings"
-    )
-
-    text = EXECUTE_SKILL.read_text()
-    assert "dp-design-critic" not in text, (
-        "deep-plan-execute SKILL.md must not launch critics itself; the nested "
-        "fleet belongs to dp-implement-task"
-    )
 
 
 if __name__ == "__main__":

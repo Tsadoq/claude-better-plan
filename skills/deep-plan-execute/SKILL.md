@@ -1,16 +1,9 @@
 ---
 name: deep-plan-execute
 description: |
-  Executes a plan produced by /deep-plan: the plan-folder artifact whose
-  plan.md carries a ## Decisions made table and per-task **Tests (TDD)**
-  blocks, located when no path is given through the approved-plan memo
-  recorded at approval. Parses
-  the plan's ## Tasks into harness tasks (one TaskCreate each), wires
-  Depends on into addBlockedBy, then dispatches each task in dependency
-  order to one writable dp-implement-task agent and audits its scope.
-  Invoke after a /deep-plan plan is
-  approved and you are ready to build it, e.g. "implement the plan" or
-  "/deep-plan:deep-plan-execute <plan-file>". Not for executing plans
+  Use after a /deep-plan plan is approved and you are ready to build it:
+  "implement the plan", or /deep-plan:deep-plan-execute <plan-path>. Dispatches
+  the plan's tasks in dependency order, one writable agent each. Not for plans
   produced outside /deep-plan.
 argument-hint: "[plan-path (plan.md file or plan folder)]"
 ---

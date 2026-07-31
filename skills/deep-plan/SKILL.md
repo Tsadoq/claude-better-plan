@@ -1,11 +1,10 @@
 ---
 name: deep-plan
 description: |
-  Triangulated, decision-surfacing planning for non-trivial tasks. Fans
-  research three ways in parallel, surfaces every meaningful sub-decision as
-  an AskUserQuestion with 3 to 5 options, runs targeted deep web research per
-  chosen option, and produces an AI-consumable plan file with TDD-embedded
-  tasks. Triggers on the slash command /deep-plan only.
+  Plans a non-trivial change before any code is written: parallel research,
+  every meaningful sub-decision put to the user as an AskUserQuestion, then a
+  plan file whose tasks each carry a failing test. Slash command only:
+  /deep-plan.
 argument-hint: "[slug:my-slug]"
 disable-model-invocation: true
 allowed-tools:
@@ -33,7 +32,7 @@ hooks:
 
 You are operating inside the `/deep-plan` skill. Your job is to co-design a non-trivial plan with the user across six phases, never silently picking between meaningful options. The user is a co-author, not a reviewer.
 
-The full design rationale lives in `${CLAUDE_PLUGIN_ROOT}/PLAN.md`. The per-phase prompt fragments live in `references/phase-prompts.md`. The plan-file output skeleton lives in `references/plan-file-template.md`. Read those files when a phase needs more detail than this body covers.
+This body is the single source of truth for the six phases; nothing in it is restated elsewhere. Read `references/phase-prompts.md` for a phase's deferred detail (commands, option literals, examples), `references/edge-flows.md` for a rare path a sentinel opens, `references/plan-file-template.md` for the plan skeleton, and `${CLAUDE_PLUGIN_ROOT}/PLAN.md` for the design rationale.
 
 ## R1: Read-only contract and verification sandbox
 
@@ -141,17 +140,11 @@ Then proceed:
 
    The script returns a JSON blob describing project root, plans_dir, sandbox path, and optional sentinels (`prompt_for_plans_dir`, `no_git`, `plans_dir_under_protected_path`).
 
-3. **plans_dir prompt** (sentinel `prompt_for_plans_dir`): ask via `AskUserQuestion`; options and persistence command in the Phase 0 fragment of phase-prompts.md.
+3. **Sentinel branches.** A sentinel is the only thing that pauses the user in Phase 0; no sentinel, no question. Each one's flow lives in `references/edge-flows.md` under its trigger, so read that flow and not the file. `prompt_for_plans_dir` asks where plans live (once per project), `plans_dir_under_protected_path` offers a move and never migrates silently, `no_git` asks whether `cwd` is the project root.
 
-4. **Protected plans_dir warning** (sentinel `plans_dir_under_protected_path`): offer the move, never migrate silently; details in the Phase 0 fragment.
+4. **R3: stale drafts and slug collision.** Before Phase 2 creates a draft, glob `plans_dir/*-draft/` and the legacy flat form; a hit, or a Phase 4.1 collision from `resolve_slug.py`, sends you to the matching R3 flow in `references/edge-flows.md`.
 
-5. **No-git fallback** (sentinel `no_git`): ask whether to use `cwd` as project root; details in the Phase 0 fragment.
-
-6. **R3: stale drafts and slug collision.** Before Phase 2 creates a draft, glob `plans_dir/*-draft/` and the legacy `plans_dir/*-draft.md`; on a stale draft, and when `resolve_slug.py` reports a Phase 4.1 collision, follow the R3 flows in the Phase 0 fragment. Never assume an existing plan file is still valid.
-
-7. **Status line.** Print one short sentence to the user describing what was bootstrapped, then proceed to Phase 1. Do not narrate Phase 0 mechanics.
-
-Phase 0 only pauses the user on first-time-per-project (plans_dir choice), a protected or stale-draft warning, or no-git fallback. Otherwise silent.
+5. **Status line.** Print one short sentence to the user describing what was bootstrapped, then proceed to Phase 1. Do not narrate Phase 0 mechanics.
 
 ## Phase 1: Parallel triangulation
 
@@ -161,7 +154,7 @@ Goal: build a shared evidence base from three independent angles before any deci
 
 - `dp-explore-codebase` (haiku) -- always.
 - `dp-research-shallow` (haiku) -- always.
-- `dp-source-ingest` (sonnet) -- only if the user provided source material (file paths, URLs, Jira IDs `[A-Z]+-\d+`, or pasted text). Parse the original `/deep-plan` prompt for these signals first; if absent, ask the user once via `AskUserQuestion` before launching.
+- `dp-source-ingest` (sonnet) -- only if the user provided source material (file paths, URLs, Jira IDs `[A-Z]+-\d+`, or pasted text). Parse the original `/deep-plan` prompt for these signals first; if absent, ask the user once via the `AskUserQuestion` in the Phase 1 fragment before launching.
 
 **Cap**: exactly one instance of each agent type in Phase 1.
 
@@ -223,7 +216,7 @@ Goal: corroborate every chosen option with citations from official docs.
 
 **Skip Phase 3 entirely** if all Phase 2 decisions selected the obvious "follows existing convention" option.
 
-**Each agent input**: `{decision, chosen_option, rejected_options, links_to_validate, success_criteria}`.
+**Each agent input**: `{decision, chosen_option, rejected_options, links_to_validate, success_criteria}`, each field explained in the Phase 3 fragment.
 
 **Each agent output**: a question-first dossier in the format defined in `agents/dp-research-deep.md` (its normative home). The only orchestration-relevant signal is an optional `## Contradiction` section.
 
@@ -235,11 +228,11 @@ Sub-steps in order:
 
 ### 4.1 Slug generation
 
-Construct the slug from `{user_intent_keywords, top_2_decision_choices}` (`[a-z0-9-]{1,60}`), then normalise and collision-check it with `resolve_slug.py`; command and examples in the Phase 4 fragment. On collision, follow R3 (Phase 0 step 6).
+Construct the slug from `{user_intent_keywords, top_2_decision_choices}`, then normalise and collision-check it with `resolve_slug.py`; command and format rules in the Phase 4 fragment. On collision, follow the R3 slug-collision flow in `references/edge-flows.md`.
 
 ### 4.2 Rename the draft folder to its final name
 
-The single fail-closed rename point: a double-guarded rename moves the draft folder to its slug name, then `setup_session.py` records the new path (exact commands and permission notes in the Phase 4 fragment). If a guard trips, follow R3 -- never a bare `mv`. From here on every plan write edits `plans_dir/<slug>/plan.md` in place; it is the single canonical plan file.
+The single fail-closed rename point: a double-guarded rename moves the draft folder to its slug name, then `setup_session.py` records the new path (exact commands and permission notes in the Phase 4 fragment). If a guard trips, follow the R3 slug-collision flow in `references/edge-flows.md` -- never a bare `mv`. From here on every plan write edits `plans_dir/<slug>/plan.md` in place; it is the single canonical plan file.
 
 ### 4.3 Synthesis lenses
 
@@ -264,7 +257,7 @@ Run inline `Bash` probes against design assumptions (sequentially, fixtures unde
 
 ## Phase 4.6: Adversarial critique
 
-Before asking for approval, try to break the plan: launch one `dp-design-critic` per design red-flag cluster, one `dp-test-critic` per cluster of `skills/tdd-review/references/test-principles.md`, and one `dp-readability-critic` per cluster of both `readability-principles.md` and `plan-integrity-principles.md` under `skills/deep-plan/references/`. All per the recipe in `skills/design-review/references/fleet-orchestration.md` (paths under `${CLAUDE_PLUGIN_ROOT}`); full instructions and finding handling live in the Phase 4.6 fragment. The bound is absolute: one pass, loop once on material findings.
+Before asking for approval, try to break the plan. Every finder is `agentType: deep-plan:dp-critic`; the four fleets differ only in the cluster source it is handed, so pass that path explicitly. One finder per red-flag cluster of the source it reads: `design-principles.md`, `skills/tdd-review/references/test-principles.md`, then `readability-principles.md` and `plan-integrity-principles.md`, both under `skills/deep-plan/references/`. All per the recipe in `skills/design-review/references/fleet-orchestration.md` (paths under `${CLAUDE_PLUGIN_ROOT}`); each fleet's review target and the finding handling live in the Phase 4.6 fragment. The bound is absolute: one pass, loop once on material findings.
 
 Arm each fleet from its signal, then pass the armed clusters through the recipe's `## Triage gate`: a code task with a missing or weak `**Tests (TDD)**` block arms the test fleet; a new module, boundary, or interface in any `Change` block arms the design fleet; a new or rewritten `design.md` or `architecture.md` section arms the readability and plan-integrity clusters. A plan arming nothing launches no critics -- say so in one sentence and go to Checkpoint 2. Otherwise proceed to Checkpoint 2 once no material findings remain or the re-run is spent.
 
@@ -273,7 +266,7 @@ Arm each fleet from its signal, then pass the armed clusters through the recipe'
 Finalize mechanically BEFORE asking, so finalization cannot be skipped:
 
 1. If the plan folder is somehow still at its `-draft/` name, complete the Phase 4.2 rename first.
-2. Run the repair pass: `finalize_plan.py --repair --plan <plans_dir>/<slug>/plan.md`. It repairs in one pass and prints `{ok, fixes, warnings}`; paraphrase non-empty `fixes`/`warnings` in two or three lines. Only `ok: false` (empty plan, or no tasks at all) warrants looping back to Phase 4. Full semantics in the Phase 5 fragment.
+2. Run the repair pass: `finalize_plan.py --repair --plan <plans_dir>/<slug>/plan.md`, then paraphrase any non-empty `fixes`/`warnings` in two or three lines. Only `ok: false` (an empty plan, or no tasks at all) warrants looping back to Phase 4. What it repairs is in the Phase 5 fragment.
 
 Then use `AskUserQuestion`:
 

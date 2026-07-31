@@ -35,18 +35,6 @@ def test_design_template_required_sections() -> None:
         assert found > pos, f"{needle!r} missing or out of order in design-md-template.md"
         pos = found
 
-    assert "readability-principles.md" in text, (
-        "the template must point authors at readability-principles.md's "
-        "Plan-time authoring rules instead of restating them"
-    )
-    assert "punctuation other than hyphens and underscores" in text, (
-        "the template must state the anchor-slug rule plan.md decision rows "
-        "link with (quoted from readability-principles.md)"
-    )
-    assert "**Chosen**" not in text, (
-        "the retired Chosen/Rejected/Why field-block shape must not resurface"
-    )
-
 
 if __name__ == "__main__":
     import sys

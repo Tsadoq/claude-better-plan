@@ -1,9 +1,8 @@
 ---
 name: dp-research-shallow
 description: |
-  Deep-plan light web reconnaissance. Fast WebSearch sweep for library names,
-  common patterns, and version landscape. No deep doc reading. Read-only.
-  Used in Phase 1 of /deep-plan.
+  Launch for a fast web sweep of the landscape before options exist: library
+  names, common patterns, current versions. No deep doc reading. Read-only.
 model: haiku
 disallowedTools: Write, Edit, NotebookEdit, Bash, Agent, ExitPlanMode
 ---

@@ -21,7 +21,7 @@ These act while the design is still fluid: option generation, decision surfacing
 
 ## Review-time red flags
 
-Each cluster below is quoted verbatim into one dp-design-critic finder. Every question is answerable yes/no against a concrete diff, plan, or file; "yes" is a finding. Severity hints are defaults — a critic may upgrade or downgrade with evidence.
+Each cluster below is quoted verbatim into one dp-critic finder. Every question is answerable yes/no against a concrete diff, plan, or file; "yes" is a finding. Severity hints are defaults — a critic may upgrade or downgrade with evidence.
 
 ### Module depth and interfaces
 
@@ -68,4 +68,4 @@ The five H2 headings above and the H3 cluster structure under "Review-time red f
 - `skills/deep-plan/SKILL.md` (Phase 2 framing and the deep-modules perspective: plan-time principles; Phase 4.6: red-flag clusters)
 - `skills/deep-plan/references/perspectives.md` (deep-modules perspective: plan-time principles)
 - `skills/deep-plan-execute/SKILL.md` (post-task review: red-flag clusters; craft rules quoted into implementation turns)
-- `agents/dp-design-critic.md` (receives one cluster per instance, quoted by the caller)
+- `agents/dp-critic.md` (receives this file's path and one cluster per instance, quoted by the caller)

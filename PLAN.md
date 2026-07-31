@@ -65,7 +65,7 @@ Generate the slug, rename the draft folder to `plans_dir/<slug>/` at Phase 4.2 b
 
 Arm each critic fleet from a named signal, then run the armed clusters through the recipe's triage gate. A code task with a missing or weak `**Tests (TDD)**` block arms the test fleet; a new module, boundary, or interface arms the design fleet; a new or rewritten `design.md` or `architecture.md` section arms the readability and plan-integrity clusters. A plan arming nothing launches no critics and goes straight to Checkpoint 2.
 
-Plan-structure review — missing tasks, wrong or missing dependencies, code tasks lacking tests, decisions contradicted by research, untested assumptions — is carried by the `dp-readability-critic` leaf running over a second cluster source, `references/plan-integrity-principles.md`, rather than by a dedicated agent: that leaf supplies no rubric of its own, so a new cluster source needs no new agent type. Findings are tagged `material` or `minor`. Material findings are fixed inline (or, if they reverse a user decision, loop back to Phase 2 with the contradiction quoted); minor findings go to `## Open questions`. The bound is absolute: one pass, loop once on material findings. Then Checkpoint 2 walks the plan with the user (approve / refine / drop / add / change a decision).
+Plan-structure review — missing tasks, wrong or missing dependencies, code tasks lacking tests, decisions contradicted by research, untested assumptions — is carried by the `dp-critic` leaf running over a further cluster source, `references/plan-integrity-principles.md`, rather than by a dedicated agent: that leaf supplies no rubric of its own, so a new cluster source needs no new agent type. Findings are tagged `material` or `minor`. Material findings are fixed inline (or, if they reverse a user decision, loop back to Phase 2 with the contradiction quoted); minor findings go to `## Open questions`. The bound is absolute: one pass, loop once on material findings. Then Checkpoint 2 walks the plan with the user (approve / refine / drop / add / change a decision).
 
 ### Phase 5: Archive and handoff
 
@@ -118,11 +118,37 @@ Discovery is dual-read, folder-write: every consumer reads both shapes (`<slug>/
 
 ## Engineering
 
-Every helper is stdlib-only Python (`setup_session.py`, `resolve_slug.py`, `finalize_plan.py`, `load_tasks.py`, and the `cleanup.py` Stop hook), ruff-clean and `mypy --strict` compliant, with no runtime dependencies. CI (`.github/workflows/ci.yml`) installs `ruff`, `mypy`, `pytest` (pinned `>=9,<10`), and `tiktoken`, then runs, in order, `ruff check skills`, `mypy --strict skills/deep-plan/scripts skills/deep-plan/hooks`, and bare `python -m pytest -v` — test discovery is owned by `pyproject.toml`'s `[tool.pytest.ini_options]` (`testpaths` plus `--import-mode=importlib`), never by per-caller path lists. `pyproject.toml` pins the gate configuration. Contract tests are co-located per skill: `skills/deep-plan/tests/` covers the golden-plan drift guard, repair/archive (including the generated Task overview and README index), session state and migration, slug normalisation and dual-form collision, the cleanup hook, the read-only agents contract, the `load_tasks` parser (file and folder inputs), the design.md template contract, and the SKILL.md frontmatter/wiring contract; `skills/design-review/tests/` pins the design-principles structure and fleet recipe; `skills/tdd-review/tests/` pins the test-principles rubric and the tdd-review wrapper.
+Every helper is stdlib-only Python (`setup_session.py`, `resolve_slug.py`, `finalize_plan.py`, `load_tasks.py`, and the `cleanup.py` Stop hook), ruff-clean and `mypy --strict` compliant, with no runtime dependencies. CI (`.github/workflows/ci.yml`) installs `ruff`, `mypy`, `pytest` (pinned `>=9,<10`), and `tiktoken`, then runs, in order, `ruff check skills`, `mypy --strict skills/deep-plan/scripts skills/deep-plan/hooks`, and bare `python -m pytest -v` — test discovery is owned by `pyproject.toml`'s `[tool.pytest.ini_options]` (`testpaths` plus `--import-mode=importlib`), never by per-caller path lists. `pyproject.toml` pins the gate configuration. Contract tests are co-located per skill: `skills/deep-plan/tests/` covers the golden-plan drift guard, repair/archive (including the generated Task overview and README index), session state, slug normalisation and dual-form collision, the cleanup hook, the read-only agents contract, the `load_tasks` parser (file and folder inputs), the design.md template contract, and the SKILL.md frontmatter/wiring contract; `skills/design-review/tests/` pins the design-principles structure and fleet recipe; `skills/tdd-review/tests/` pins the test-principles rubric and the tdd-review wrapper.
+
+## Authoring budgets
+
+Repo size and plugin cost are unrelated numbers. Roughly 17,000 lines live here; a few hundred words of it are paid for unconditionally, and most of the rest is never loaded at all. Three loading tiers, each with its own cost profile, decide where a byte belongs:
+
+| Tier | Members | When it is paid | What growth costs |
+|------|---------|-----------------|-------------------|
+| Always resident | the frontmatter `description` of each `skills/*/SKILL.md` and `agents/*.md` | every turn of every session, used or not | the one cost in this plugin no user can opt out of |
+| On invoke | a `SKILL.md` body | on invocation, and again on every re-attach | the harness re-attaches under a front-anchored truncation window, so an over-long body silently loses its tail sections -- the failure is invisible, not loud |
+| On read | anything under `references/` | only in the turn that reads the file | nothing until read; this is the tier progressive disclosure exists for |
+
+The tier model is load-bearing, not commentary: it is what reversed the original decision to collapse `references/phase-prompts.md` into `skills/deep-plan/SKILL.md`. That collapse would have moved bytes from the free tier into the re-attached one, and measurement showed the merged file overshooting the window by 14 to 26%. The two files were deduplicated against each other instead, each passage kept in exactly one of them, with `SKILL.md` owning what every phase needs and the fragment citing it rather than restating it. The same reasoning created `references/edge-flows.md`: per-phase fragments were bad progressive disclosure because every phase runs in every session, but the sentinel-triggered flows genuinely do not run in most, so they earn a file that is read on demand.
+
+`BUDGETS` in `tests/guarantees.py` is the single normative home of every size limit this repo enforces. Each entry carries its own justification in a comment beside the number and no assertion anywhere restates a size, so what is worth recording here is not the numbers but which files are held and by what kind of constraint:
+
+| Entry | Unit | Kind of constraint | Enforced by |
+|-------|------|--------------------|-------------|
+| `description_chars` | characters | the harness's own cap; not ours to raise | `tests/test_guarantees.py` |
+| `description_words` | words | our routing target; nothing truncates at it | `tests/test_guarantees.py` |
+| `deep_plan_skill_tokens` | `o200k_base` tokens | a truncation window, held under rather than at | `skills/deep-plan/tests/test_skill_contract.py` |
+| `phase_prompts_tokens` | `o200k_base` tokens | a ratchet against re-duplication | `skills/deep-plan/tests/test_skill_contract.py` |
+| `fleet_recipe_lines` | lines | a ratchet on prose every fleet caller quotes | `tests/test_guarantees.py` |
+
+That split of duties is the point: the unit and the enforcing gate are structural facts worth stating once here, while any number and its reasoning are one edit away from each other in `guarantees.py` and would drift the moment they were copied. Two consequences follow. A budget never outranks a guarantee: where trimming to fit would drop a behaviour `GUARANTEES` names, the budget is raised and the reason recorded beside it. And a budget is a ratchet, not a target -- entries sit just above the measured value so that re-growth fails, which only works while raising one stays a deliberate, explained edit.
+
+Nothing else is budgeted, deliberately: the stdlib-only helpers in `skills/deep-plan/scripts/` execute as subprocesses, the contract tests run in CI, and `PLAN.md` and the archived plans under `docs/plans/` are read ad hoc by humans. None enters a model's context, so their line count is not a cost and trimming them would buy nothing while removing rationale.
 
 ## Runtime layout
 
-The repo root is the plugin root and the marketplace root. Runtime data lives under `$XDG_STATE_HOME/deep-plan/` (default `~/.local/state/deep-plan/`): `projects.json` (per-project `plans_dir` map), `state/<session_id>.json` (per-session state), and `hook-errors.log`. None of it is git-tracked. (The v0.1 `~/gits/plan-modes` source-of-truth subfolder, the `install.py` symlink step, and the `~/.claude/deep-plan/` location are superseded; `setup_session.py` self-bootstraps the runtime dirs and performs a one-shot migration from the legacy location.)
+The repo root is the plugin root and the marketplace root. Runtime data lives under `$XDG_STATE_HOME/deep-plan/` (default `~/.local/state/deep-plan/`): `projects.json` (per-project `plans_dir` map), `state/<session_id>.json` (per-session state), and `hook-errors.log`. None of it is git-tracked. (The v0.1 `~/gits/plan-modes` source-of-truth subfolder, the `install.py` symlink step, and the `~/.claude/deep-plan/` location are superseded; `setup_session.py` self-bootstraps the runtime dirs. The one-shot migration that copied state from the pre-v0.5 location was removed once no plausible user base for it remained.)
 
 ## Change log
 
@@ -151,7 +177,7 @@ v0.4 (plan-mode removal, draft-to-slug lifecycle; six decisions resolved via a d
 15. **Minimal session state.** State carries only `{plans_dir, plan_path, sandbox_dir, session_id, project_root, started_at}`; the dead `phase`, `decisions`, `harness_plan_path`, and `archive_plan_path` fields are gone and `PERMITTED_UPDATE_KEYS` shrinks to `{plans_dir, plan_path}`. (Decision 5)
 16. **`docs/plans/` default.** `<repo>/docs/plans/` is the recommended plans_dir; `.claude/plans/` is demoted with a protected-path warning (writes under `.claude/` always prompt and cannot be allowlisted), and a remembered protected plans_dir triggers a warn-and-offer-to-move sentinel. The smooth-write mechanism is a `permissions.allow` snippet in project `.claude/settings.json`, since plugins cannot ship permissions. (Decision 6)
 
-v0.5 (design-review critic fleet): design-quality guidance embedded across plan, critique, and execute stages via the `dp-design-critic` fleet and `skills/design-review/`; see the `## Design review` section of README.md.
+v0.5 (design-review critic fleet): design-quality guidance embedded across plan, critique, and execute stages via a dedicated design-critic fleet agent (one of the three later merged into `dp-critic`) and `skills/design-review/`; see the `## Design review` section of README.md.
 
 v0.6 (folder-per-plan artifact set, design-rationale capture; five decisions resolved via a dogfooded /deep-plan run):
 
@@ -161,7 +187,7 @@ v0.6 (folder-per-plan artifact set, design-rationale capture; five decisions res
 20. **design.md two-phase lifecycle.** The plan phase seeds expanded per-decision rationale (why chosen, why alternatives were rejected, evidence links); the execute phase appends terse per-task Implementation notes gated after each task's verification passes. Terse and scoped by contract: a design document, not a journal. (Decision 4)
 21. **Dual-read, folder-write.** All consumers read both plan shapes; `resolve_slug.py` treats either form as a collision; new plans are always folders; legacy flat plans are approved historical records left untouched. (Decision 5)
 
-v0.7 (test principles): test-quality guidance embedded across plan, critique, and execute stages via `references/test-principles.md` and the `dp-test-critic` fleet, mirroring the v0.5 design-review pattern.
+v0.7 (test principles): test-quality guidance embedded across plan, critique, and execute stages via `references/test-principles.md` and a dedicated test-critic fleet agent (later merged into `dp-critic`), mirroring the v0.5 design-review pattern.
 
 v0.8 (standalone tdd-review skill, approved-plan memo, re-attach budget): `test-principles.md` moved to the new model-invocable /tdd-review skill (every rubric caller rewired); Phase 5 records a durable approved-plan memo that deep-plan-execute Step 1 consults before the newest-mtime fallback; deep-plan SKILL.md trimmed under the 5000-token re-attach ceiling, enforced by a tiktoken contract test; contract tests co-located per skill.
 
@@ -170,7 +196,7 @@ v0.9 (narrative artifact set, readability enforcement; eight decisions resolved 
 22. **Narrative design.md.** design.md becomes a narrative design document (Background, then one plain-language-question section per decision, decision stated in the first sentence); the plan's `## Decisions made` table shrinks to an index whose Rationale cells link into it by anchor slug. (Decision 1)
 23. **Conditional architecture.md.** A new folder member carries the Today / After world model with a mermaid diagram, written at Phase 4.4 only when the plan passes the significance test in `references/architecture-md-template.md`; skipping it is the common case. (Decision 2)
 24. **Question-first dossiers.** `agents/dp-research-deep.md` is the single normative home of the dossier shape (`**The question**` / `**The answer**` / `**What we found**` / `**Sources**`, bold labels so dossiers nest under `###` headings without breaking appendix slicing), and the `## Research dossiers` appendix opens with a per-decision coverage table. (Decision 3)
-25. **Readability enforcement in three layers.** Authoring rules live once in `references/readability-principles.md` (quoted by templates and agent prompts), a `dp-readability-critic` fleet reviews the finished artifacts in Phase 4.6, and `finalize_plan.py` adds warning-only mechanical checks: dangling H2/H3 sections and decisions-index links that resolve to no design.md heading (sibling design.md discovered by path convention; absent design.md disables the link check, so legacy plans gain no warnings). (Decision 4)
+25. **Readability enforcement in three layers.** Authoring rules live once in `references/readability-principles.md` (quoted by templates and agent prompts), a `dp-critic` fleet reading `readability-principles.md` reviews the finished artifacts in Phase 4.6, and `finalize_plan.py` adds warning-only mechanical checks: dangling H2/H3 sections and decisions-index links that resolve to no design.md heading (sibling design.md discovered by path convention; absent design.md disables the link check, so legacy plans gain no warnings). (Decision 4)
 26. **Self-explaining probes and structured Change blocks.** Probe entries carry why / command / observed / what-a-failure-would-have-meant around the unchanged `[probe N]` anchor line, and every `**Change**` block continues after its summary sentence in structured sub-bullets; all machine contracts stay byte-compatible, pinned by a frozen legacy golden fixture. (Decisions 5 to 8)
 
 v0.10 (delegated execute, lean fan-out; six decisions resolved via a dogfooded /deep-plan run):
@@ -202,7 +228,7 @@ Replaced in v0.10 by a checklist the synthesis turn walks in-turn, one pass per 
 
 Phase 4.6 launched one `inherit`-model plan-critic agent that returned findings under five fixed headings (missing tasks, wrong or missing dependencies, code tasks lacking tests, decisions contradicted by research, untested assumptions) plus a one-line verdict.
 
-Replaced in v0.10 by `references/plan-integrity-principles.md`, a cluster source carried by the existing haiku `dp-readability-critic` leaf through the standard find-then-verify fleet recipe. All five check classes survive as questions in the `### Plan integrity` cluster, pinned by `test_plan_integrity_contract.py`. A separate file rather than a second cluster in `readability-principles.md`, because that file's contract test asserts exactly one cluster and because plan-structure knowledge does not belong in a file scoped to narrative readability.
+Replaced in v0.10 by `references/plan-integrity-principles.md`, a cluster source carried by the existing haiku critic leaf -- `dp-critic` since the three critics merged -- through the standard find-then-verify fleet recipe. All five check classes survive as questions in the `### Plan integrity` cluster, pinned by `test_plan_integrity_contract.py`. A separate file rather than a second cluster in `readability-principles.md`, because that file's contract test asserts exactly one cluster and because plan-structure knowledge does not belong in a file scoped to narrative readability.
 
 ## History (flat-file plan layout)
 
@@ -338,9 +364,7 @@ Source of truth lives at `~/gits/plan-modes/deep-plan/`. After running `install.
     ├── dp-research-shallow.md
     ├── dp-research-deep.md
     ├── dp-source-ingest.md
-    ├── dp-design-critic.md
-    ├── dp-test-critic.md
-    ├── dp-readability-critic.md
+    ├── dp-critic.md                         # one leaf, four cluster sources
     └── dp-implement-task.md                    # the only writable agent (execute time)
 
 ~/.claude/                                      # Claude Code discovery + runtime data
@@ -368,7 +392,7 @@ All paths below are relative to `~/gits/plan-modes/deep-plan/` unless prefixed w
 | `skills/deep-plan/SKILL.md` | Entry point. Frontmatter declares triggers, scoped hooks (referenced via `${CLAUDE_SKILL_DIR}/hooks/...`), allowed-tools, `disable-model-invocation: true`. Body is the 6-phase orchestration prompt with embedded reminders. |
 | `skills/deep-plan/references/phase-prompts.md` | Per-phase prompt fragments the orchestrator quotes into context. |
 | `skills/deep-plan/references/perspectives.md` | The six synthesis lenses (simplicity, performance, maintainability, minimal-diff, security, deep-modules) as a checklist the Phase 4.3 synthesis turn sweeps in-turn. |
-| `skills/deep-plan/references/plan-integrity-principles.md` | Cluster source for the plan-structure checks (unscheduled work, wrong `Depends on`, untested code tasks, contradicted decisions, unverified claims), carried by `dp-readability-critic`. |
+| `skills/deep-plan/references/plan-integrity-principles.md` | Cluster source for the plan-structure checks (unscheduled work, wrong `Depends on`, untested code tasks, contradicted decisions, unverified claims), carried by `dp-critic`. |
 | `skills/deep-plan/references/plan-file-template.md` | Markdown skeleton the orchestrator fills in. Section headers, formatting rules, TDD criteria template. |
 | `skills/deep-plan/scripts/setup_session.py` | Bootstrap helper. Resolves `git rev-parse --show-toplevel`, reads `projects.json`, writes `state/<session_id>.json`. Pure stdlib, mypy strict, ruff-clean. |
 | `skills/deep-plan/scripts/resolve_slug.py` | Normalises orchestrator-suggested slug, checks for collision in `plans_dir`, returns accepted slug or collision metadata for `AskUserQuestion`. |

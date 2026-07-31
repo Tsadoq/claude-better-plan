@@ -1,10 +1,11 @@
-"""Contract test: the test-guidance content and its wiring.
+"""Contract test: the shapes and caps around the test-guidance rubric.
 
-Pins the structure of skills/tdd-review/references/test-principles.md
-(the single source of truth for test guidance) so orchestrators that quote
-its sections by heading never silently break, and pins the tdd-review
-skill wrapper that owns the rubric. Stdlib only, so CI does not need
-pyyaml.
+Pins what a substring cannot express: the red-flag cluster count in
+skills/tdd-review/references/test-principles.md, the tdd-review skill
+wrapper's frontmatter schema and router description budget, the synthesis
+lens catalogue, and the red-then-green-then-rerun ordering in the implementer
+agent. Which files must cite which rubric is pinned instead by
+tests/guarantees.py. Stdlib only, so CI does not need pyyaml.
 
 Runnable two ways:
     python3 skills/tdd-review/tests/test_test_principles_contract.py
@@ -24,7 +25,6 @@ TDD_REVIEW_SKILL = ROOT / "skills" / "tdd-review" / "SKILL.md"
 PERSPECTIVES = ROOT / "skills" / "deep-plan" / "references" / "perspectives.md"
 DEEP_PLAN_SKILL = ROOT / "skills" / "deep-plan" / "SKILL.md"
 PHASE_PROMPTS = ROOT / "skills" / "deep-plan" / "references" / "phase-prompts.md"
-EXECUTE_SKILL = ROOT / "skills" / "deep-plan-execute" / "SKILL.md"
 
 # The synthesis lenses, all six of which the synthesis turn sweeps in-turn.
 LENSES = (
@@ -41,13 +41,6 @@ LENSES = (
 PERSPECTIVES_PINNING_TESTS = (
     "skills/tdd-review/tests/test_test_principles_contract.py",
     "skills/design-review/tests/test_design_review_contract.py",
-)
-
-PRINCIPLES_H2 = (
-    "## Plan-time authoring rules",
-    "## Review-time red flags",
-    "## Execute-time run rules",
-    "## How to update these guidelines",
 )
 
 
@@ -81,9 +74,6 @@ def test_test_principles_structure() -> None:
     assert TEST_PRINCIPLES.exists(), f"missing guideline file: {TEST_PRINCIPLES}"
     text = TEST_PRINCIPLES.read_text()
 
-    for heading in PRINCIPLES_H2:
-        assert heading in text, f"test-principles.md missing section {heading!r}"
-
     red_flags = _section(text, "## Review-time red flags")
     clusters = _clusters(red_flags)
     assert len(clusters) == 4, (
@@ -95,18 +85,13 @@ def test_test_principles_structure() -> None:
             f"red-flag cluster {name!r} has no checkable yes/no question"
         )
 
-    assert "Attribution" not in text, (
-        "test-principles.md must not carry an attribution section (independent rephrasing)"
-    )
-
 
 def test_tdd_review_skill_contract() -> None:
     assert TDD_REVIEW_SKILL.exists(), f"missing skill wrapper: {TDD_REVIEW_SKILL}"
     text = TDD_REVIEW_SKILL.read_text()
     # Search from offset 3 to skip the opening "---" delimiter and find the
     # closing one, so `frontmatter` is everything between the two fences.
-    end = text.index("\n---", 3)
-    frontmatter, body = text[:end], text[end:]
+    frontmatter = text[: text.index("\n---", 3)]
 
     # Line-anchored key checks: a top-level YAML key starts at column 0, so a
     # commented-out or nested look-alike cannot satisfy them.
@@ -134,13 +119,6 @@ def test_tdd_review_skill_contract() -> None:
         f"description is {len(description)} chars; model-invocable descriptions must stay under 1024"
     )
 
-    for pointer in (
-        "references/test-principles.md",
-        "fleet-orchestration.md",
-        "deep-plan:dp-test-critic",
-    ):
-        assert pointer in body, f"tdd-review SKILL.md body missing pointer {pointer!r}"
-
 
 def test_lens_catalogue_is_a_synthesis_checklist() -> None:
     # The lenses are swept inside the synthesis turn, not drafted by a fan-out
@@ -159,10 +137,6 @@ def test_lens_catalogue_is_a_synthesis_checklist() -> None:
     for pinning in PERSPECTIVES_PINNING_TESTS:
         assert pinning in registry, f"perspectives.md registry missing pinning test {pinning!r}"
 
-    assert "tdd-review/references/test-principles.md" in text, (
-        "perspectives.md must point Tests-block authoring at the tdd-review rubric path"
-    )
-
 
 def test_phase46_launches_test_critic_fleet() -> None:
     skill = DEEP_PLAN_SKILL.read_text()
@@ -170,17 +144,21 @@ def test_phase46_launches_test_critic_fleet() -> None:
     end = skill.find("## Phase 5")
     assert start != -1 and end != -1, "deep-plan SKILL.md must keep Phase 4.6 and Phase 5 headings"
     region = skill[start:end]
-    for needle in ("dp-test-critic", "tdd-review/references/test-principles.md"):
-        assert needle in region, f"Phase 4.6 of deep-plan SKILL.md must reference {needle!r}"
+    assert "test-principles.md" in region, (
+        "Phase 4.6 of deep-plan SKILL.md must name test-principles.md as a cluster source; "
+        "one critic type serves all four fleets, so the source is the whole wiring"
+    )
 
-    assert "dp-test-critic" in PHASE_PROMPTS.read_text(), (
+    assert "test-principles.md" in PHASE_PROMPTS.read_text(), (
         "phase-prompts.md must mirror the Phase 4.6 test fleet"
     )
-    # Test-quality judgment stays with the dp-test-critic fleet: the plan-integrity
-    # cluster that replaced the standalone critic checks Tests-block *structure* only.
+    # Test-quality judgment stays with the fleet reading test-principles.md: the
+    # plan-integrity cluster that replaced the standalone critic checks
+    # Tests-block *structure* only, and must say which run owns the rest.
     integrity = ROOT / "skills" / "deep-plan" / "references" / "plan-integrity-principles.md"
-    assert "dp-test-critic" in integrity.read_text(), (
-        "plan-integrity-principles.md must defer test-quality judgment to the dp-test-critic fleet"
+    assert "test-principles.md" in integrity.read_text(), (
+        "plan-integrity-principles.md must defer test-quality judgment to the fleet "
+        "running against test-principles.md"
     )
 
 
@@ -189,12 +167,7 @@ def test_execute_loop_quotes_run_rules_and_rechecks_stability() -> None:
     # live in the implementer agent. The agent reads the rule sections itself
     # instead of having the dispatcher quote them into a prompt.
     agent = (ROOT / "agents" / "dp-implement-task.md").read_text()
-    for needle in (
-        "tdd-review/references/test-principles.md",
-        "dp-test-critic",
-        "Execute-time run rules",
-        "Execute-time craft rules",
-    ):
+    for needle in ("dp-critic", "Execute-time run rules", "Execute-time craft rules"):
         assert needle in agent, f"dp-implement-task.md must reference {needle!r}"
 
     # Ordering: red before green, and the stability re-run after green.

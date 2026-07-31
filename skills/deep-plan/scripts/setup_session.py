@@ -53,46 +53,17 @@ RUNTIME_DIR = _runtime_dir()
 STATE_DIR = RUNTIME_DIR / "state"
 PROJECTS_JSON = RUNTIME_DIR / "projects.json"
 HOOK_ERROR_LOG = RUNTIME_DIR / "hook-errors.log"
-LEGACY_RUNTIME_DIR = HOME / ".claude" / "deep-plan"
 
 
 def ensure_runtime_dirs() -> None:
-    """Self-bootstrap runtime layout. Replaces the old install.py step.
-
-    Also performs a one-shot migration from ~/.claude/deep-plan/ to the new
-    XDG location if the new dir is empty and the legacy dir has content.
-    """
+    """Self-bootstrap runtime layout. Replaces the old install.py step."""
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     if not PROJECTS_JSON.exists():
         PROJECTS_JSON.write_text("{}\n")
     if not HOOK_ERROR_LOG.exists():
         HOOK_ERROR_LOG.touch()
-    _maybe_migrate_legacy()
 
-
-def _maybe_migrate_legacy() -> None:
-    if not LEGACY_RUNTIME_DIR.exists() or LEGACY_RUNTIME_DIR == RUNTIME_DIR:
-        return
-    breadcrumb = RUNTIME_DIR / "MIGRATED.txt"
-    if breadcrumb.exists():
-        return
-    try:
-        legacy_projects = LEGACY_RUNTIME_DIR / "projects.json"
-        if legacy_projects.exists() and PROJECTS_JSON.read_text().strip() in ("", "{}"):
-            PROJECTS_JSON.write_text(legacy_projects.read_text())
-        legacy_state = LEGACY_RUNTIME_DIR / "state"
-        if legacy_state.is_dir():
-            for f in legacy_state.glob("*.json"):
-                target = STATE_DIR / f.name
-                if not target.exists():
-                    target.write_text(f.read_text())
-        breadcrumb.write_text(
-            f"Migrated from {LEGACY_RUNTIME_DIR} on {utcnow()}.\n"
-            "Legacy dir left intact; safe to delete manually.\n"
-        )
-    except Exception:
-        pass
 
 PERMITTED_UPDATE_KEYS = {
     "plans_dir",

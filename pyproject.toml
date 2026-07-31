@@ -17,8 +17,14 @@ select = ["E", "F", "I", "B", "UP"]
 [tool.pytest.ini_options]
 # Discovery is owned here: callers (CI, `uvx pytest`) run bare pytest and
 # never list per-skill test paths. One entry per skill that ships a
-# co-located tests/ dir.
-testpaths = ["skills/deep-plan/tests", "skills/design-review/tests", "skills/tdd-review/tests"]
+# co-located tests/ dir, plus the repo-level `tests/`, which holds the
+# cross-skill guarantee inventory that no single skill owns.
+testpaths = [
+    "tests",
+    "skills/deep-plan/tests",
+    "skills/design-review/tests",
+    "skills/tdd-review/tests",
+]
 # importlib mode isolates the sibling test dirs from each other, so same-named
 # test modules or conftests across skills cannot collide on import.
 addopts = "--import-mode=importlib"
