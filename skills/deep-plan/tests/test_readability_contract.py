@@ -1,9 +1,11 @@
-"""Contract test: the readability-guidance content.
+"""Contract test: the shape of the readability red-flag cluster.
 
-Pins the structure of skills/deep-plan/references/readability-principles.md
-(the single source of truth for narrative-artifact readability) so callers
-that quote its sections by heading never silently break. Stdlib only, so CI
-does not need pyyaml.
+skills/deep-plan/references/readability-principles.md is the single source of
+truth for narrative-artifact readability, and a critic is only useful if its
+cluster still carries checkable questions -- a count no substring pin can
+express. The file's H2 spine is pinned instead by tests/guarantees.py under
+`readability-principles.section-spine`. Stdlib only, so CI does not need
+pyyaml.
 
 Runnable two ways:
     python3 skills/deep-plan/tests/test_readability_contract.py
@@ -17,12 +19,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 READABILITY = ROOT / "skills" / "deep-plan" / "references" / "readability-principles.md"
-
-PRINCIPLES_H2 = (
-    "## Plan-time authoring rules",
-    "## Review-time red flags",
-    "## How to update these guidelines",
-)
 
 
 def _section(text: str, heading: str) -> str:
@@ -43,14 +39,6 @@ def _clusters(section: str) -> list[str]:
 def test_readability_principles_structure() -> None:
     assert READABILITY.exists(), f"missing guideline file: {READABILITY}"
     text = READABILITY.read_text()
-
-    positions: list[int] = []
-    for heading in PRINCIPLES_H2:
-        assert heading in text, f"readability-principles.md missing section {heading!r}"
-        positions.append(text.index(heading))
-    assert positions == sorted(positions), (
-        f"H2 sections out of order; expected {PRINCIPLES_H2}"
-    )
 
     red_flags = _section(text, "## Review-time red flags")
     clusters = _clusters(red_flags)

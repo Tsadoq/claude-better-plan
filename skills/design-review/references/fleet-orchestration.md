@@ -1,10 +1,8 @@
 # Critic-fleet orchestration
 
-How every caller (the standalone `/design-review` and `/tdd-review` skills, deep-plan Phase 4.6, and the deep-plan-execute post-task review) runs a critic fleet. A triage gate arms the clusters worth checking, one finder per armed cluster, a dedup barrier, then an adversarial verify stage. The mechanics live only here; callers state their review target, pick the critic agent type, and quote this recipe. Three pairings are supported:
+How every caller (the standalone `/design-review` and `/tdd-review` skills, deep-plan Phase 4.6, and the deep-plan-execute post-task review) runs a critic fleet. A triage gate arms the clusters worth checking, one finder per armed cluster, a dedup barrier, then an adversarial verify stage. This file is the caller's half of that, and the only home for it: the fan-out, the wire the two halves meet on, and the budget. Callers state their review target, name their cluster source, and quote this recipe. How a leaf judges what it reads — and how hard it leans on a finding in verify mode — belongs to `agents/dp-critic.md` and is deliberately not restated here, because four callers quote this file and pay for every line of it whether or not a fleet ever runs.
 
-- `deep-plan:dp-design-critic` with `design-principles.md` (the default).
-- `deep-plan:dp-test-critic` with the tdd-review skill's `test-principles.md`.
-- `deep-plan:dp-readability-critic` with *either* `readability-principles.md` or `skills/deep-plan/references/plan-integrity-principles.md`. This leaf carries no rubric of its own — its whole question set is caller-supplied — so a second cluster source needs no new agent type, only a second run of the recipe.
+Every finder is the same agent type, `deep-plan:dp-critic`, and it carries no rubric of its own, so what varies between runs is the cluster source, not the agent. The caller passes one principles-file path explicitly — `design-principles.md` (the default), the tdd-review skill's `test-principles.md`, `skills/deep-plan/references/readability-principles.md`, or `skills/deep-plan/references/plan-integrity-principles.md` — alongside the cluster name, and the leaf reads that file itself. Selection never rests on which agent description best matches the review; there is only one to match.
 
 ## Triage gate
 
@@ -23,65 +21,56 @@ Preferred path when the Workflow tool is available (see `## Version gate`). The 
 
 ```javascript
 export const meta = {
-  name: 'design-critic-fleet',
-  description: 'Fan out one design critic per red-flag cluster, dedup, adversarially verify',
+  name: 'critic-fleet',
+  description: 'Fan out one critic per red-flag cluster, dedup, adversarially verify',
   phases: [
     { title: 'Triage', detail: 'name the clusters worth checking' },
     { title: 'Find', detail: 'one finder per armed cluster' },
-    { title: 'Verify', detail: 'refute each surviving finding' },
+    { title: 'Verify', detail: 'adversarially re-check each surviving finding' },
   ],
 }
 
 const TRIAGE_SCHEMA = {
-  type: 'object',
-  required: ['armed'],
+  type: 'object', required: ['armed'],
   properties: { armed: { type: 'array', items: { type: 'string' } } },
 }
 
+// The five finding fields, declared once so `required` is derived, never drifts.
+const FINDING = {
+  cluster: { type: 'string' },
+  severity: { enum: ['material', 'minor'] },
+  principle: { type: 'string' },
+  evidence: { type: 'string', description: 'file:line' },
+  finding: { type: 'string' },
+}
+const FINDING_ITEM = { type: 'object', required: Object.keys(FINDING), properties: FINDING }
 const FINDINGS_SCHEMA = {
-  type: 'object',
-  required: ['findings'],
-  properties: {
-    findings: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['cluster', 'severity', 'principle', 'evidence', 'finding'],
-        properties: {
-          cluster: { type: 'string' },
-          severity: { enum: ['material', 'minor'] },
-          principle: { type: 'string' },
-          evidence: { type: 'string', description: 'file:line' },
-          finding: { type: 'string' },
-        },
-      },
-    },
-  },
+  type: 'object', required: ['findings'],
+  properties: { findings: { type: 'array', items: FINDING_ITEM } },
 }
 
 const VERDICT_SCHEMA = {
-  type: 'object',
-  required: ['refuted', 'reason'],
+  type: 'object', required: ['refuted', 'reason'],
   properties: { refuted: { type: 'boolean' }, reason: { type: 'string' } },
 }
 
-// One entry per H3 cluster under `## Review-time red flags` in the caller's
-// principles file; `questions` is that cluster's bullet list, quoted verbatim.
 // args = { clusters: [{name, questions}], target: '<diff text | plan excerpt | file paths>',
-//          agentType: '<critic agent type; default deep-plan:dp-design-critic>' }
-const critic = args.agentType ?? 'deep-plan:dp-design-critic'
+//          source: '<principles-file path>',
+//          agentType: '<critic agent type; default deep-plan:dp-critic>' }
+// One `clusters` entry per H3 cluster under `## Review-time red flags` in the
+// caller's principles file; `questions` is that cluster's bullet list, verbatim.
+const critic = args.agentType ?? 'deep-plan:dp-critic'
 
-// Triage: names only, no cluster bodies. Fails open — an unusable answer arms
-// everything, so the gate can never silently swallow the review.
 phase('Triage')
 const triage = await agent(
-  `Decide where a design review of this target is worth spending effort.\n` +
+  `Decide where a review against ${args.source} is worth spending effort.\n` +
   `Candidate red-flag clusters: ${args.clusters.map(c => c.name).join(', ')}.\n` +
   `Review target:\n${args.target}\n` +
   `Return the names of only the clusters that plausibly have something to find. ` +
   `You have not been given the clusters' questions; name clusters, do not report findings.`,
   { label: 'triage', phase: 'Triage', schema: TRIAGE_SCHEMA, agentType: critic },
 )
+// Fails open per `## Triage gate`: an unusable answer arms every cluster.
 const armedNames = new Set(triage?.armed ?? [])
 const armed = armedNames.size ? args.clusters.filter(c => armedNames.has(c.name)) : args.clusters
 if (armed.length < args.clusters.length) {
@@ -91,9 +80,10 @@ if (armed.length < args.clusters.length) {
 phase('Find')
 const found = await parallel(armed.map(c => () =>
   agent(
-    `You are checking one red-flag cluster: ${c.name}.\n${c.questions}\n` +
+    `Your cluster source is ${args.source}.\n` +
+    `You are checking one red-flag cluster from it: ${c.name}.\n${c.questions}\n` +
     `Review target:\n${args.target}\n` +
-    `Report every "yes" answer as a finding with cluster, severity, principle, evidence (file:line), finding.`,
+    `Report every finding those questions turn up.`,
     { label: `find:${c.name}`, phase: 'Find', schema: FINDINGS_SCHEMA, agentType: critic },
   )))
 
@@ -109,7 +99,7 @@ const deduped = found.filter(Boolean).flatMap(r => r.findings).filter(f => {
 phase('Verify')
 const verified = await parallel(deduped.map(f => () =>
   agent(
-    `Adversarially verify this design finding. Try to REFUTE it; default to refuted if the evidence does not hold.\n` +
+    `Verify mode: one prior finding to re-check against ${args.source}.\n` +
     `Finding: [${f.severity}] ${f.cluster}/${f.principle}: ${f.finding} -- evidence: ${f.evidence}\n` +
     `Review target:\n${args.target}`,
     { label: `verify:${f.principle}`, phase: 'Verify', schema: VERDICT_SCHEMA, agentType: critic },
@@ -122,12 +112,7 @@ The returned findings carry `{cluster, severity: material|minor, principle, evid
 
 ## Version gate
 
-The Workflow tool is not universally present:
-
-- Requires Claude Code >= 2.1.154.
-- Paid plans only, and off by default on Pro (users enable it via /config).
-- Org-disableable via the `disableWorkflows` setting or `CLAUDE_CODE_DISABLE_WORKFLOWS`.
-- Not programmatically feature-detectable: there is no API that reports whether Workflow is available before calling it, and a call in default permission modes surfaces an approval card the user may deny.
+The Workflow tool is not universally present: it needs Claude Code >= 2.1.154 on a paid plan, is off by default on Pro (users enable it via /config), and is org-disableable through the `disableWorkflows` setting or `CLAUDE_CODE_DISABLE_WORKFLOWS`. None of that is programmatically feature-detectable — no API reports whether Workflow is available before you call it, and a call in default permission modes surfaces an approval card the user may deny.
 
 Callers therefore attempt the Workflow path and treat absence, denial, or error as an immediate switch to `## Fallback` — never as a reason to skip the review.
 
@@ -135,9 +120,9 @@ Callers therefore attempt the Workflow path and treat absence, denial, or error 
 
 Normative whenever the Workflow tool is absent, denied, or errors. Same shape, driven by the caller through the plain Agent tool:
 
-1. **Find.** Launch one critic of the caller-chosen agent type (haiku) per H3 cluster under `## Review-time red flags` in the caller's principles file — `dp-design-critic` with `design-principles.md`, `dp-test-critic` with the tdd-review skill's `test-principles.md` — all in a single message so they run concurrently. Each prompt carries: the cluster name, that cluster's questions quoted verbatim, and the review target (diff text, plan excerpt, or file paths). Each critic returns one finding per line: `[material|minor] {cluster}/{principle}: {finding} -- evidence: {file:line}` — the same fields as the Workflow schema, so no information is lost relative to the Workflow path.
+1. **Find.** Launch one `deep-plan:dp-critic` per H3 cluster under `## Review-time red flags` in the caller's principles file, all in a single message so they run concurrently. Each prompt carries four things: the cluster-source path, the cluster name, that cluster's questions quoted verbatim, and the review target (diff text, plan excerpt, or file paths). The source path is not decoration — it is the only thing that tells an otherwise identical leaf whether it is hunting design, test, readability, or plan-integrity flaws. Each critic returns one finding per line: `[material|minor] {cluster}/{principle}: {finding} -- evidence: {file:line}` — the same fields as the Workflow schema, so no information is lost relative to the Workflow path.
 2. **Dedup.** The caller merges the finder outputs and drops findings sharing the same evidence location and principle.
-3. **Verify.** For each surviving finding, launch a fresh instance of the same critic agent type prompted to REFUTE it (again batched in one message). A finding stands only if the verifier cannot refute it; discard refuted findings.
+3. **Verify.** For each surviving finding, launch a fresh `deep-plan:dp-critic` in verify mode, carrying that one finding and the same cluster source (again batched in one message). The adversarial stance is the agent's own, so the prompt need not argue for it; the caller only routes the verdict, keeping the findings that come back `stands` and discarding the ones that come back `refuted`.
 4. **Route.** Handle surviving findings exactly as in the Workflow path: `material` into the caller's fix loop, `minor` into its non-blocking channel.
 
 ## Nested fleets
@@ -147,23 +132,19 @@ A fleet may be launched by a subagent rather than by the main thread — the dee
 - **Pass `run_in_background: false` on every `Agent` launch.** Subagents default to *background*, and a backgrounded launch returns an acknowledgement rather than a result. A fleet whose finders were backgrounded reports zero findings and looks like a clean review, which is the worst available failure mode.
 - **Take the `## Fallback` path directly; do not attempt the Workflow path.** `workflow()` nesting is capped at one level, so a nested Workflow call throws. This is the one case where skipping the Workflow attempt is correct rather than a shortcut.
 
-Namespaced agent-type resolution *from inside a subagent* has been probed for `deep-plan:dp-design-critic` only, and that probe used an unnamespaced type (see `## agentType resolution`). Treat resolution of any other type from a nested caller as unverified: if a launch fails to resolve, degrade to inline self-review against the same cluster questions and say so in the return summary. Never let a resolution failure become a skipped review.
+Namespaced agent-type resolution *from inside a subagent* is unverified: the one probe on record ran from a main thread (see `## agentType resolution`), and it named the predecessor of today's `deep-plan:dp-critic`. If a launch fails to resolve, degrade to inline self-review against the same cluster questions and say so in the return summary. Never let a resolution failure become a skipped review.
 
 ## Session agent budget
 
-Two hard caps apply, and both count nested children against the launching session:
+Two hard caps apply. Both count nested children against the launching session, and both defaults can be raised but neither can be turned off, so a caller cannot opt out of budgeting.
 
 - **200 subagents per session** (`CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION`).
 - **20 concurrent subagents** (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`).
 
-Both defaults can be raised, but neither can be turned off, so a caller cannot opt out of budgeting.
-
-A fleet's own agent count is *not* fixed. Triage is one, find is one per armed cluster, but verify launches one agent per surviving deduped finding and is bounded only by how much the finders found. A target with many real defects therefore costs more agents than a clean one — which is the right direction, but it means a caller cannot budget a fleet as a single number.
-
-Callers that run one fleet per unit of work (per task, per file) must state their per-unit cost as a **range** and degrade on the upper end, not the lower. Budgeting on the minimum is how a run dies two thirds of the way through a large plan.
+A fleet's own agent count is *not* fixed. Triage is one, find is one per armed cluster, but verify launches one agent per surviving deduped finding and is bounded only by how much the finders found. A target with many real defects therefore costs more agents than a clean one — which is the right direction, but it means a caller cannot budget a fleet as a single number. Callers that run one fleet per unit of work (per task, per file) must state their per-unit cost as a **range** and degrade on the upper end, not the lower. Budgeting on the minimum is how a run dies two thirds of the way through a large plan.
 
 ## agentType resolution
 
 Probe status: probed 2026-07-03, Claude Code 2.1.200
 
-Plugin-namespaced agentType resolution is undocumented, so it was probed empirically: a headless session loaded this plugin from a local checkout (`--plugin-dir`), confirmed `deep-plan:dp-design-critic` in the agent registry, and ran a one-agent Workflow script with `agentType: "deep-plan:dp-design-critic"` on a trivial one-file review. The namespaced form resolved and the critic returned its schema-shaped result; the bare form (`"dp-design-critic"`) was not needed and remains untested. Callers should use the plugin-namespaced form. `## Fallback` stays normative for environments where Workflow itself is gated (see `## Version gate`), not because of resolution uncertainty. `deep-plan:dp-test-critic` relies on the same namespaced mechanism but has not been separately probed, so `## Fallback` stays normative for it until a first Workflow run confirms resolution.
+Plugin-namespaced agentType resolution is undocumented, so it was probed empirically: a headless session loaded this plugin from a local checkout (`--plugin-dir`), confirmed the critic agent of the day in the agent registry, and ran a one-agent Workflow script with its plugin-namespaced `agentType` on a trivial one-file review. The namespaced form resolved and the critic returned its schema-shaped result; the bare, un-namespaced form was not needed and remains untested. Callers should use the plugin-namespaced form, `deep-plan:dp-critic`. Two caveats on how far that probe carries: it ran against the design critic that `deep-plan:dp-critic` later absorbed, so the merged agent's own registry entry is untested, and it ran from a main thread, so nested resolution is untested (see `## Nested fleets`). `## Fallback` therefore stays normative — for gated Workflow environments (see `## Version gate`) and for resolution uncertainty alike.

@@ -16,7 +16,7 @@ These act while a plan's `**Tests (TDD)**` blocks are being drafted. Every rule 
 
 ## Review-time red flags
 
-Each cluster below is quoted verbatim into one dp-test-critic finder. Every question is answerable yes/no against a plan's `**Tests (TDD)**` blocks or a task diff; "yes" is a finding. Severity hints are defaults — a critic may upgrade or downgrade with evidence.
+Each cluster below is quoted verbatim into one dp-critic finder. Every question is answerable yes/no against a plan's `**Tests (TDD)**` blocks or a task diff; "yes" is a finding. Severity hints are defaults — a critic may upgrade or downgrade with evidence.
 
 ### Assertions and failure output
 
@@ -80,7 +80,7 @@ The four H2 headings above and the four-cluster H3 structure under "Review-time 
 - `skills/tdd-review/SKILL.md` (standalone review: all four red-flag clusters)
 - `skills/deep-plan/references/plan-file-template.md` (Tests block schema: plan-time authoring rules)
 - `skills/deep-plan/references/perspectives.md` (plan synthesis lenses: plan-time authoring rules)
-- `agents/dp-test-critic.md` (receives one red-flag cluster per instance, quoted by the caller)
-- `skills/design-review/references/fleet-orchestration.md` (fleet recipe: pairs dp-test-critic with this file's clusters)
-- `skills/deep-plan/SKILL.md` and `skills/deep-plan/references/phase-prompts.md` (Phase 4.4 synthesis: plan-time authoring rules; Phase 4.6: red-flag clusters)
+- `agents/dp-critic.md` (receives this file's path and one red-flag cluster per instance, quoted by the caller)
+- `skills/design-review/references/fleet-orchestration.md` (fleet recipe: pairs dp-critic with this file's clusters)
+- `skills/deep-plan/SKILL.md` (Phase 4.4 synthesis: plan-time authoring rules, its only home; Phase 4.6: red-flag clusters) and `skills/deep-plan/references/phase-prompts.md` (Phase 4.6: the review target those clusters are handed)
 - `skills/deep-plan-execute/SKILL.md` (implementation turns: execute-time run rules; post-task review: red-flag clusters)

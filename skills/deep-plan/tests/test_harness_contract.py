@@ -20,21 +20,26 @@ PYPROJECT = ROOT / "pyproject.toml"
 CI_YML = ROOT / ".github" / "workflows" / "ci.yml"
 
 
-def _colocated_test_dirs() -> list[str]:
-    """The repo layout is the source of truth for what discovery must cover."""
-    return sorted(
-        str(p.relative_to(ROOT)) for p in (ROOT / "skills").glob("*/tests") if p.is_dir()
-    )
+def _discoverable_test_dirs() -> list[str]:
+    """The repo layout is the source of truth for what discovery must cover.
+
+    Two shapes qualify: a skill's co-located `tests/` dir, and the repo-level
+    `tests/` dir that holds the cross-skill checks no single skill owns. Both
+    are found by walking the tree, so adding either kind of dir cannot be
+    forgotten in pyproject.toml.
+    """
+    candidates = [*(ROOT / "skills").glob("*/tests"), ROOT / "tests"]
+    return sorted(str(p.relative_to(ROOT)) for p in candidates if p.is_dir())
 
 
-def test_pytest_config_discovers_colocated_skill_tests() -> None:
-    expected = _colocated_test_dirs()
+def test_pytest_config_discovers_every_test_dir() -> None:
+    expected = _discoverable_test_dirs()
     config = tomllib.loads(PYPROJECT.read_text())
     ini = config.get("tool", {}).get("pytest", {}).get("ini_options", {})
     assert ini, "pyproject.toml missing the [tool.pytest.ini_options] table"
     assert sorted(ini.get("testpaths", [])) == expected, (
-        f"tool.pytest.ini_options.testpaths must cover every co-located skill "
-        f"test dir {expected}, got {ini.get('testpaths')}"
+        f"tool.pytest.ini_options.testpaths must list exactly the test dirs the "
+        f"repo contains {expected}, got {ini.get('testpaths')}"
     )
     assert "--import-mode=importlib" in ini.get("addopts", ""), (
         "tool.pytest.ini_options.addopts must carry --import-mode=importlib"

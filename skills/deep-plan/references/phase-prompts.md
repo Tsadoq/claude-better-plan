@@ -1,360 +1,104 @@
-# Phase-prompt fragments
+# Per-phase detail
 
-Long-form per-phase prompts the orchestrator quotes into context as needed. The skill body in `SKILL.md` is the short orchestration; this file is the detail.
+`SKILL.md` is the orchestration: it states every phase, its bound, and what it must decide. This file is only what `SKILL.md` defers to -- exact commands, option-set literals, worked examples -- one section per phase that has any, read when that phase names it.
+
+Nothing here restates `SKILL.md`. Where both need a passage, this file names the `SKILL.md` section rather than copying it, because two copies of one instruction drift and the reader cannot tell which copy is current. So Phase 0 and Phase 2 have no section below: `SKILL.md` carries them whole, and Phase 0's sentinel-triggered paths live in `edge-flows.md`.
 
 ## Contents
 
-- [Phase 0: Bootstrap](#phase-0-bootstrap)
-- [Phase 1: Parallel triangulation](#phase-1-parallel-triangulation)
-- [Phase 2: Decision surfacing](#phase-2-decision-surfacing)
-- [Phase 3: Targeted deep research](#phase-3-targeted-deep-research)
-- [Phase 4: Synthesis and verification](#phase-4-synthesis-and-verification)
-- [Phase 4.6: Adversarial critique](#phase-46-adversarial-critique)
-- [Phase 5: Archive and handoff](#phase-5-archive-and-handoff)
+- [Phase 1: the sources question](#phase-1-the-sources-question)
+- [Phase 3: agent inputs](#phase-3-agent-inputs)
+- [Phase 4: commands and examples](#phase-4-commands-and-examples)
+- [Phase 4.6: review targets and finding handling](#phase-46-review-targets-and-finding-handling)
+- [Phase 5: what the repair pass does](#phase-5-what-the-repair-pass-does)
 
-## Phase 0: Bootstrap
+## Phase 1: the sources question
 
-```
-You are at the start of /deep-plan. Before doing anything else:
+`SKILL.md`'s `## Phase 1: Parallel triangulation` launches `dp-source-ingest` only when the user has material to ingest, and asks once when the original prompt carries no signal of it. That question is:
 
-0. Parse $ARGUMENTS for the optional `slug:<value>` token (there is no native key:value
-   parser). The rest of $ARGUMENTS is the topic. There is one mode: where a fragment
-   below gives a number, that number is the bound. Every agent launch is effort: inherit.
+- Question: "Do you have existing material I should ingest? Local files, URLs, Jira IDs, or pasted text. Skip if not."
+- Header: "Sources"
+- Options:
+  1. "No, proceed without sources" (Recommended when the prompt showed no signal)
+  2. "Yes, I will paste paths/URLs/IDs in my next message"
+  3. "Yes, here is a Jira ticket / URL / file path: ..."
 
-1. Check the most recent system reminder. If it contains "Plan mode is active.", print one
-   sentence asking the user to toggle plan mode off (Shift+Tab) and stop the turn. This
-   skill never runs inside plan mode (SKILL.md R2); there is no second code path for it.
+Ask it once. A second ask reads as nagging, and option 1 is the common case.
 
-2. Run setup_session.py to bootstrap session state:
-       python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
-         --session-id ${CLAUDE_SESSION_ID}
+## Phase 3: agent inputs
 
-   The script returns a JSON blob describing the resolved project root, plans_dir, and
-   sandbox path, plus optional sentinels:
-   - prompt_for_plans_dir: true             -> ask the user via AskUserQuestion (options below).
-   - no_git: true                           -> ask the user whether to use cwd as project root.
-   - plans_dir_under_protected_path: <path> -> the remembered plans_dir lives under .claude/,
-     where every write prompts and cannot be allowlisted. Offer the move via AskUserQuestion
-     (<repo>/docs/plans/ recommended; keeping the current dir stays allowed). Never migrate
-     silently.
+Each `dp-research-deep` instance takes five fields:
 
-3. Plans-dir options when prompting (Phase 0):
-   1. <repo>/docs/plans/                   (Recommended)
-   2. <repo>/plans/
-   3. <repo-parent>/<repo-name>-plans/
-   4. <repo>/.claude/plans/                (warn: protected path, every write prompts)
+- `decision` -- the short name from Phase 2.
+- `chosen_option` -- the user's pick.
+- `rejected_options` -- the others, so the dossier can say why they lose.
+- `links_to_validate` -- any URLs Phase 1's `dp-research-shallow` surfaced.
+- `success_criteria` -- one or two specific things the dossier must confirm or deny. Without these the agent returns a survey instead of an answer.
 
-   The default MUST NOT be ~/.claude/plans/. Persist the user's choice via:
-       python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
-         --update plans_dir=<ABS_PATH> --session-id ${CLAUDE_SESSION_ID}
+The dossier format itself is normative in `agents/dp-research-deep.md`; do not restate it in the launch prompt.
 
-4. Stale-draft detection (R3, BEFORE Phase 2 may create a new draft): glob plans_dir/*-draft/
-   alongside the legacy flat form plans_dir/*-draft.md. If a draft exists (left by an
-   abandoned run), read its ## Context and ## Decisions made (for a draft folder, from
-   its plan.md member), then ask via AskUserQuestion [resume from draft, overwrite, start
-   fresh under another topic name]. Default: resume (seed Phase 2 with the draft's
-   already-resolved decisions). Overwrite deletes the stale draft. No orphan draft may
-   reach Phase 4.
+## Phase 4: commands and examples
 
-5. Slug collision (R3, reached from Phase 4.1 when resolve_slug.py reports the slug
-   already exists as the folder plans_dir/<slug>/ or the legacy flat file
-   plans_dir/<slug>.md): read the existing plan's ## Context and ## Decisions made,
-   then ask via AskUserQuestion [refine existing, overwrite, new with -v2 suffix,
-   custom suffix]. Default when similar to current intent: refine (seed the current
-   plan from the existing file, then edit in place). Default when unrelated: -v2
-   suffix (auto-incremented to -v3, -v4 if taken). Never assume an existing plan
-   file is still valid.
+### 4.1 Slug format
 
-6. After state is bootstrapped, print a single short status sentence to the user and
-   proceed to Phase 1. Do not narrate Phase 0's mechanics.
-```
-
-## Phase 1: Parallel triangulation
+A slug is lowercase `[a-z0-9-]{1,60}`, hyphen-separated, with no leading, trailing, or doubled hyphen. `resolve_slug.py` normalises a near-miss and reports a collision rather than guessing:
 
 ```
-Goal: build a shared evidence base from three independent angles before any decision
-is taken. Launch up to three subagents in a single message:
-
-- dp-explore-codebase  (haiku, always)
-- dp-research-shallow  (haiku, always)
-- dp-source-ingest     (sonnet, ONLY if the user has provided source material)
-
-Decide whether to launch dp-source-ingest by:
-- Parsing the original /deep-plan prompt for: file paths (start with /, ~, or ./),
-  URLs, Jira-style IDs matching [A-Z]+-\d+, or pasted-text indicators.
-- If none, ask the user once via AskUserQuestion:
-    "Do you have existing material I should ingest? Local files, URLs, Jira IDs,
-     or pasted text. Skip if not."
-    Header: "Sources"
-    Options:
-      1. "No, proceed without sources" (Recommended if no signal)
-      2. "Yes, I will paste paths/URLs/IDs in my next message"
-      3. "Yes, here is a Jira ticket / URL / file path: ..."
-
-After all launched agents return, synthesise their outputs into:
-- patterns_found:        from dp-explore-codebase
-- candidate_libraries:   from dp-research-shallow
-- user_source_summary:   from dp-source-ingest (or "none")
-- open_unknowns:         union of unresolved questions
-
-Checkpoint 1 (always blocks): paraphrase scope back via AskUserQuestion:
-    Q: "Based on Phase 1 findings, here is what I think we are planning.
-        Confirm scope?"
-    Header: "Scope"
-    Options:
-      1. "Scope is correct, proceed to decision surfacing" (Recommended)
-      2. "Narrow to <specific_subscope>"
-      3. "Broaden to <larger_scope>"
-      4. "Defer <specific_aspect> to a follow-up plan"
-
-If the answer is anything other than option 1, re-loop into Phase 1 with the adjusted
-scope. Do not proceed to Phase 2 without explicit scope confirmation.
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/resolve_slug.py \
+  --slug <s> --plans-dir <d>
 ```
 
-## Phase 2: Decision surfacing
+### 4.2 The guarded rename
+
+Both guards sit on the `mv` line itself, so a guard that passes for the folder form cannot let the legacy flat form be clobbered:
 
 ```
-Goal: enumerate two to five sub-decisions worth surfacing, generate option sets inline,
-and resolve them sequentially with the user in dependency order.
-
-Generate options inline (orchestrator-only). DO NOT spawn an agent for option generation.
-Phase 1 evidence is already in your context.
-
-Heuristics for "what counts as a sub-decision" (surface IFF at least one holds AND you
-cannot trivially infer the answer from Phase 1 evidence):
-- Architectural axis: storage backend, transport, sync vs async, in-process vs out.
-- Algorithm or data-structure family with measurable trade-offs.
-- Library choice when 2+ credible options exist in the Phase 1 shortlist.
-- Boundary placement: middleware vs decorator vs base class vs separate service.
-- Test strategy when the codebase has heterogeneous testing patterns.
-
-Skip surfacing when:
-- The codebase already has one dominant pattern (3+ examples of pattern X, 0 of others).
-  Log under "Decisions made" with rationale "follows existing convention".
-- The user's prompt explicitly fixes the choice ("use Redis").
-
-Cap: at most 5 surfaced decisions per plan. Excess goes to "Open questions".
-
-Build a dependency DAG of decisions. Present sequentially in topological order, each via
-its own AskUserQuestion call. Each option set has 3 to 5 options, with the recommended
-option marked "(Recommended)" and listed first.
-
-Immediately before asking the FIRST decision, create the draft plan file
-plans_dir/<topic>-draft/plan.md (Write; the Write creates the folder) seeded with the
-skeleton's title, ## Context paragraph, and an empty ## Decisions made table, then
-record it:
-    python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
-      --update plan_path=<plans_dir>/<topic>-draft/plan.md --session-id ${CLAUDE_SESSION_ID}
-
-After each AskUserQuestion resolves, immediately Edit the draft to append a row to
-the `## Decisions made` table. This is the persistence point: do NOT batch. The draft is
-crash-safe: every resolved decision survives an abandoned run.
-
-If choosing option X for decision N invalidates an option for decision M (downstream),
-recompute M's options before asking. Example: choosing "Redis" as rate-limit store
-forecloses "use SQLite atomic counters" later.
+test ! -e <plans_dir>/<slug> && test ! -e <plans_dir>/<slug>.md && mv <plans_dir>/<topic>-draft <plans_dir>/<slug>
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
+  --update plan_path=<plans_dir>/<slug>/plan.md --session-id ${CLAUDE_SESSION_ID}
 ```
 
-## Phase 3: Targeted deep research
+Issue the guarded command with project-relative paths (`docs/plans/...`) from the project root when `plans_dir` is inside the project: permission rules prefix-match the literal command string, so an absolute path misses the allowlist and prompts once. Fall back to absolute paths when `plans_dir` is outside the project.
+
+### 4.3 How hard to sweep each lens
+
+`SKILL.md`'s `### 4.3 Synthesis lenses` names the checklist and fixes `deep-modules` as the last lens. How much scrutiny each of the others gets is yours to judge: give one to three of them real attention, chosen by the priorities the user has shown, and skim the rest. Sweeping all of them equally costs a lot of turn and finds little.
+
+### 4.5 Probe examples
+
+A verification probe is a one-line question to the environment, not a test suite:
 
 ```
-Goal: for every chosen option needing corroboration, do deep web/library research with
-citations.
-
-Launch one dp-research-deep agent per decision branch IN PARALLEL in a single message.
-Cap at 4 parallel instances. If more than 4 decisions need research, batch in waves of 4.
-
-Skip Phase 3 entirely only if all Phase 2 decisions selected the obvious "follows existing
-convention" option, meaning no novel libraries to research.
-
-Inputs to each agent:
-- decision: short name from Phase 2
-- chosen_option: the user's pick
-- rejected_options: the other options
-- links_to_validate: any URLs from Phase 1 dp-research-shallow
-- success_criteria: 1 to 2 specific things the dossier must confirm or deny
-
-Each agent returns a question-first dossier in the format defined in
-agents/dp-research-deep.md (its normative home); the only orchestration-relevant
-signal is an optional ## Contradiction section.
-
-If any dossier returns ## Contradiction, loop back to Phase 2 for that decision only.
-Quote the contradicting evidence in the new AskUserQuestion. Do not silently override
-the user's earlier choice.
+python3 -c "import redis; print(redis.__version__)"
+grep -rl 'TokenBucket' src/
+uv run pytest --collect-only tests/middleware/
 ```
 
-## Phase 4: Synthesis and verification
+Each answers one question in one line. A probe that needs a whole fixture tree is a test, and belongs in the plan as a task rather than here.
 
-```
-Sub-steps in order:
+## Phase 4.6: review targets and finding handling
 
-1. Slug generation (orchestrator inline):
-   - Construct slug from {user_intent_keywords, top_2_decision_choices}.
-   - Format: [a-z0-9-]{1,60}, lowercase, hyphen-separated, no leading/trailing or
-     double hyphens.
-   - Run resolve_slug.py to normalise and check for collision:
-       python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/resolve_slug.py \
-         --slug <s> --plans-dir <d>
-   - On collision, follow the R3 slug-collision flow (Phase 0 fragment, step 5).
+`SKILL.md`'s `## Phase 4.6: Adversarial critique` owns which fleets exist, which cluster source each reads, what arms it, and the loop bound. What it defers here is the review target each fleet is handed, and what to do with what comes back. Launch every fleet per `${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/fleet-orchestration.md`, including its `## Triage gate`, which drops clusters with nothing to find before any finder runs.
 
-2. Rename the Phase 2 draft folder to its final name (Phase 4.2, the single fail-closed
-   rename point; guard BOTH the folder and the legacy flat form, and on guard failure
-   follow the R3 collision flow instead of clobbering), then record the new path:
-       test ! -e <plans_dir>/<slug> && test ! -e <plans_dir>/<slug>.md && mv <plans_dir>/<topic>-draft <plans_dir>/<slug>
-       python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
-         --update plan_path=<plans_dir>/<slug>/plan.md --session-id ${CLAUDE_SESSION_ID}
-   Issue the guarded command with project-relative paths (docs/plans/...) from the
-   project root when plans_dir is inside the project (permission rules prefix-match the
-   literal command string); fall back to absolute paths otherwise (may prompt once).
-   From here on every plan write edits plans_dir/<slug>/plan.md in place. It is the
-   single canonical plan file; there is no mirror.
+**Review targets**, one per cluster source:
 
-3. Synthesis lenses: launch no agents. Walk the ## Synthesis checklist of
-   references/perspectives.md in this turn -- draft the tasks once, then sweep lens by
-   lens, giving 1 to 3 lenses real scrutiny per the user's evident priorities and
-   always ending with deep-modules, which reshapes task boundaries.
+- `design-principles.md`: the synthesized plan body and its `## Architecture` section, read as a design artifact rather than as prose.
+- `test-principles.md`: every task's `**Tests (TDD)**` block.
+- `readability-principles.md`: `plan.md`, `design.md`, and `architecture.md` when present, read as documents.
+- `plan-integrity-principles.md`: the plan body, the `## Decisions made` table, the Phase 1 evidence, and the Phase 3 dossiers. That cluster is structural -- work never scheduled, a wrong or cyclic `Depends on`, a code task with no `**Tests (TDD)**` block, a task contradicting `## Decisions made` or a dossier, a load-bearing claim with neither probe nor citation -- so the finder needs the evidence, not only the plan. The dossiers are question-first per `agents/dp-research-deep.md` (**The question**, **The answer**, **What we found**, **Sources**, plus any `## Contradiction`); tell it to cite a dossier by section, not by page.
 
-4. Synthesis: merge perspectives into a single plan body using
-   references/plan-file-template.md as the skeleton, editing plans_dir/<slug>/plan.md
-   in place over the draft-seeded sections and applying ## Plan-time authoring rules
-   of references/readability-principles.md to every section. Include the
-   **Tests (TDD)** subsection only for tasks that produce or modify code, carrying
-   the template's full field schema per code task and applying ## Plan-time
-   authoring rules of ${CLAUDE_PLUGIN_ROOT}/skills/tdd-review/references/test-principles.md;
-   omit it for markdown, docs, or config tasks. Append the Phase 3 dossiers
-   verbatim under a ## Research dossiers appendix, opening it with the template's
-   ### Coverage preamble table (one row per ## Decisions made row, naming the
-   dossier or why the decision was not researched), so they survive into the
-   archived folder members.
-   In the same sub-step, seed <plans_dir>/<slug>/design.md per the narrative
-   references/design-md-template.md: a ## Background section, then one
-   question-shaped section per decision row, each linked from that row's Rationale
-   cell. Leave ## Implementation notes empty; the execute skill appends to it per
-   completed task. When the plan passes the significance test of
-   references/architecture-md-template.md (its skip-list is the counter-rule), also
-   write <plans_dir>/<slug>/architecture.md from that template.
-   Merge rules:
-   - When perspectives disagree on task ordering or test scope, prefer the union (additive).
-   - When perspectives disagree on architectural choice, that means a sub-decision was
-     missed; loop back to Phase 2.
+All four are `dp-critic` launched four times, not four agent types: that leaf's whole rubric is caller-supplied, so a cluster source needs only another launch that names it.
 
-5. Verification probes: run inline Bash checks against design assumptions. Examples:
-       python3 -c "import redis; print(redis.__version__)"
-       grep -rl 'TokenBucket' src/
-       uv run pytest --collect-only tests/middleware/
-   Capture each probe into the plan's `## Verification probes` appendix using the
-   four-part entry shape defined in references/plan-file-template.md (the command
-   line plus why it ran, what was observed, and what a failure would have meant).
-   Probes run sequentially for deterministic ordering. Probes that need to write
-   fixtures write under the sandbox; the hook permits this.
+**Finding handling.** All four fleets tag findings `material` or `minor`, merge into one list, and share one loop bound; there are no per-fleet knobs.
 
-After all sub-steps, proceed to Phase 4.6 (adversarial critique) before Checkpoint 2.
-```
+- A `material` finding that reverses a user decision -> back to Phase 2 for that one decision, quoting the critic's contradiction in the new `AskUserQuestion`. Never reverse a decision the user made without asking them again.
+- Any other `material` finding -> fix it in the plan body directly (add the missing task, correct `**Depends on**`, add the missing `**Tests (TDD)**` block, add a probe), then relaunch that finder once if the single re-run is unspent.
+- A `minor` finding -> append to `## Open questions`, and only if it is genuinely deferrable: a non-empty `## Open questions` blocks `/deep-plan:deep-plan-execute` later, so parking a real blocker there stalls the next session instead of this one.
 
-## Phase 4.6: Adversarial critique
+Then finalize and present Checkpoint 2 exactly as `SKILL.md`'s `### Checkpoint 2` states.
 
-```
-Goal: try to refute the synthesized plan before the user is asked to approve it.
+## Phase 5: what the repair pass does
 
-First arm the fleets. Each is launched only if its signal is present in the plan:
-- test fleet:        a code task with a missing or weak **Tests (TDD)** block.
-- design fleet:      a new module, boundary, or interface in any Change block.
-- readability fleet: a new or rewritten design.md or architecture.md section.
-- plan-integrity:    the same signal as readability.
-If nothing is armed, launch no critics: tell the user in one sentence and go straight
-to Checkpoint 2. Every armed fleet then passes its clusters through the recipe's
-## Triage gate, which drops the clusters with nothing to find before any finder runs.
-Neither this fragment nor SKILL.md restates the session caps; see the recipe's
-## Session agent budget.
+`finalize_plan.py --repair` runs before the Checkpoint 2 question, never after, so it cannot be skipped by an approval. It rewrites em-dashes, fixes task headers, inserts missing sections and task subsections as `n/a`, strips attribution, and regenerates the `## Task overview` table between its markers, then prints `{ok, fixes, warnings}`.
 
-In the same launch message, run the design fleet per
-${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/fleet-orchestration.md: one
-dp-design-critic (haiku) per red-flag cluster in design-principles.md, reviewing the
-synthesized plan body and its ## Architecture section as a design artifact, then the
-recipe's adversarial verify stage (Workflow path when available, fallback otherwise).
-Also run the same recipe with agentType deep-plan:dp-test-critic: one finder per H3
-cluster of ## Review-time red flags in
-${CLAUDE_PLUGIN_ROOT}/skills/tdd-review/references/test-principles.md, reviewing
-every task's **Tests (TDD)** block. And run it once more with agentType
-deep-plan:dp-readability-critic: one finder per H3 cluster of ## Review-time red
-flags in ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/references/readability-principles.md,
-reviewing plan.md, design.md, and architecture.md when present as documents.
-Run that same leaf once more over
-${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/references/plan-integrity-principles.md,
-whose ### Plan integrity cluster carries the structural checks the retired
-standalone plan critic owned: work never scheduled, a wrong or cyclic Depends on,
-a code task with no **Tests (TDD)** block, a task contradicting ## Decisions made
-or a dossier, and a load-bearing claim with neither probe nor citation. Give it the
-plan body, the ## Decisions made table, the Phase 1 evidence and the Phase 3
-dossiers as its review target -- those dossiers are question-first per
-agents/dp-research-deep.md (**The question**, **The answer**, **What we found**,
-**Sources**, plus any ## Contradiction), so cite a dossier by section, not by page.
-No new agent type: that leaf's whole rubric is
-caller-supplied, which is why a second cluster source needs only a second run.
-Design, test, readability and plan-integrity findings carry the same material|minor
-tags, merge into the handling below, and share one loop bound; no separate knobs.
-
-The bound is absolute: one pass, loop once on material findings.
-
-Act on findings:
-- Material finding that reverses a user decision -> loop back to Phase 2 for that decision,
-  quoting the critic's contradiction in the new AskUserQuestion. Never reverse it silently.
-- Other material findings -> fix inline in the plan body (add the missing task, fix
-  **Depends on**, add the missing **Tests (TDD)** block, add a verification probe), then
-  re-run the critic once if that re-run is still unspent.
-- Minor findings -> append to ## Open questions (kept genuinely deferrable, since a
-  non-empty ## Open questions blocks /deep-plan:deep-plan-execute later).
-
-When the loop bound is reached or no material findings remain, finalize mechanically
-BEFORE asking: complete the draft-to-slug folder rename if still pending, then run the
-finalize_plan.py --repair pass (semantics in the Phase 5 fragment). Then present
-Checkpoint 2:
-    Q: "Plan written to <plans_dir>/<slug>/plan.md. What next?"
-    Header: "Plan review"
-    Options:
-      1. "Approve and finalize" (Recommended)
-      2. "Refine task <N>"
-      3. "Drop task <N>"
-      4. "Add a task"
-      5. "Change a decision"
-
-This question IS the approval gate (SKILL.md R2). The "approve" branch leads to Phase 5.
-Other branches loop back appropriately.
-```
-
-## Phase 5: Archive and handoff
-
-```
-1. The repair pass runs BEFORE the Checkpoint 2 question (it cannot be skipped,
-   because it precedes the approval):
-       python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/finalize_plan.py \
-         --repair --plan <plans_dir>/<slug>/plan.md
-
-   finalize_plan.py auto-repairs the plan (em-dashes, task headers, missing
-   sections and task subsections inserted as n/a, attribution stripped, the
-   ## Task overview table regenerated between its markers) and prints
-   {ok, fixes, warnings}. It does NOT reject a normal plan: it repairs in
-   one pass. Paraphrase any non-empty fixes/warnings to the user in two or three
-   lines (for example, a code task missing its **Tests (TDD)** block). Only
-   ok=false (empty plan, or no tasks at all) warrants looping back to Phase 4.
-
-2. On approval (Checkpoint 2 option 1, "Approve and finalize"): split the appendix
-   sections into folder members in place (source and destination are the same file),
-   record the approved-plan memo, then emit EXACTLY the handoff message:
-       python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/finalize_plan.py \
-         --archive --plan <plans_dir>/<slug>/plan.md --plans-dir <plans_dir> --slug <slug>
-
-       python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/setup_session.py \
-         --update last_plan_path=<plans_dir>/<slug>/plan.md --session-id ${CLAUDE_SESSION_ID}
-
-       Plan approved and written to {plans_dir}/{slug}/plan.md (with research.md,
-       probes.md, design.md, and architecture.md members when present; plans index
-       refreshed at {plans_dir}/README.md).
-
-       Recommended next: run `/compact` (or `/clear` if you do not need any planning
-       context preserved). The lean plan file is the canonical input for implementation;
-       the planning chatter (agent dossiers, perspective drafts, decision option sets)
-       is no longer needed and consumes context.
-
-       After /compact, prompt me to begin implementation.
-```
+It does not reject a normal plan; it repairs one. A `warnings` entry names something worth telling the user about (a code task whose `**Tests (TDD)**` block is missing, say) but never something worth re-looping for. `SKILL.md`'s `### Checkpoint 2` states how much of that to relay and the one exit that does warrant looping back to Phase 4; its `## Phase 5` section carries the archive commands and the literal handoff message.

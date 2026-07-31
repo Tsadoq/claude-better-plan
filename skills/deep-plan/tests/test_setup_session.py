@@ -234,47 +234,66 @@ def test_v03_state_and_projects_forward_compat() -> None:
         shutil.rmtree(Path("/tmp") / f"deep-plan-{sid}", ignore_errors=True)
 
 
-def test_legacy_migration_copies_once() -> None:
-    saved = (
-        setup.RUNTIME_DIR,
-        setup.STATE_DIR,
-        setup.PROJECTS_JSON,
-        setup.HOOK_ERROR_LOG,
-        setup.LEGACY_RUNTIME_DIR,
-    )
+def test_bootstrap_ignores_legacy_state_dir() -> None:
+    """A stale pre-v0.5 ~/.claude/deep-plan/ must not feed back into bootstrap.
+
+    Runs the script as production does — a fresh subprocess — because both roots
+    are resolved at import time. The two env redirects do different jobs: HOME
+    places the fake legacy dir, so the test never reads the developer's real
+    ~/.claude/; XDG_STATE_HOME places the state this bootstrap writes, keeping it
+    out of the module-level state root the in-process tests share.
+    """
+    marker = "/marker/legacy-plans-dir-must-not-be-read"
+    script = SCRIPTS / "setup_session.py"
+    sid = "pytest-legacy-ignored"
     with tempfile.TemporaryDirectory() as d:
-        base = Path(d)
-        new_runtime = base / "new"
-        legacy = base / "legacy"
+        home = Path(d).resolve()
+        legacy = home / ".claude" / "deep-plan"
         (legacy / "state").mkdir(parents=True)
-        (legacy / "projects.json").write_text('{"/proj": {"plans_dir": "/proj/.claude/plans"}}\n')
+        (legacy / "projects.json").write_text(
+            json.dumps({str(home): {"plans_dir": marker}}) + "\n"
+        )
         (legacy / "state" / "old-session.json").write_text('{"session_id": "old-session"}')
+        before = {p.relative_to(legacy): p.read_bytes() for p in legacy.rglob("*") if p.is_file()}
 
-        setup.RUNTIME_DIR = new_runtime
-        setup.STATE_DIR = new_runtime / "state"
-        setup.PROJECTS_JSON = new_runtime / "projects.json"
-        setup.HOOK_ERROR_LOG = new_runtime / "hook-errors.log"
-        setup.LEGACY_RUNTIME_DIR = legacy
+        env = {**os.environ, "HOME": str(home), "XDG_STATE_HOME": str(home / "xdg-state")}
         try:
-            setup.ensure_runtime_dirs()
-            migrated = json.loads(setup.PROJECTS_JSON.read_text())
-            assert migrated == {"/proj": {"plans_dir": "/proj/.claude/plans"}}
-            assert (setup.STATE_DIR / "old-session.json").exists()
-            assert (new_runtime / "MIGRATED.txt").exists()
+            # cwd is not a git repo, so project_root resolves to `home` itself —
+            # the very key the legacy record above is written under. A migration
+            # would therefore surface `marker` as plans_dir.
+            proc = subprocess.run(
+                [sys.executable, str(script), "--session-id", sid],
+                cwd=home,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            assert proc.returncode == 0, f"bootstrap failed: {proc.stderr}"
+            out = json.loads(proc.stdout)
+            assert out["project_root"] == str(home), (
+                "test setup is wrong: legacy record is keyed on a different project root, "
+                f"so the migration path would not have been exercised (got {out['project_root']})"
+            )
+            assert out["plans_dir"] is None, (
+                f"bootstrap resolved plans_dir from the legacy dir: {out['plans_dir']!r}"
+            )
+            assert out["sentinels"]["prompt_for_plans_dir"] is True
+            assert marker not in proc.stdout, "legacy marker leaked into bootstrap output"
 
-            # Second run must NOT re-migrate: the breadcrumb guards it.
-            (legacy / "projects.json").write_text('{"/proj2": {}}\n')
-            setup.ensure_runtime_dirs()
-            again = json.loads(setup.PROJECTS_JSON.read_text())
-            assert again == {"/proj": {"plans_dir": "/proj/.claude/plans"}}, "must not re-migrate"
+            xdg = home / "xdg-state" / "deep-plan"
+            assert marker not in (xdg / "projects.json").read_text(), (
+                "legacy projects.json was copied into the XDG state dir"
+            )
+            assert not (xdg / "state" / "old-session.json").exists(), (
+                "legacy session state was resurrected into the XDG state dir"
+            )
+
+            after = {
+                p.relative_to(legacy): p.read_bytes() for p in legacy.rglob("*") if p.is_file()
+            }
+            assert after == before, "legacy dir must be left untouched"
         finally:
-            (
-                setup.RUNTIME_DIR,
-                setup.STATE_DIR,
-                setup.PROJECTS_JSON,
-                setup.HOOK_ERROR_LOG,
-                setup.LEGACY_RUNTIME_DIR,
-            ) = saved
+            shutil.rmtree(Path("/tmp") / f"deep-plan-{sid}", ignore_errors=True)
 
 
 if __name__ == "__main__":

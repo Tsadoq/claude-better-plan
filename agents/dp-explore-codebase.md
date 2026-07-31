@@ -1,9 +1,9 @@
 ---
 name: dp-explore-codebase
 description: |
-  Deep-plan codebase explorer. Parallel breadth-first search for existing
-  patterns, target files, and similar features in the user's project. Read-only.
-  Used in Phase 1 of /deep-plan.
+  Launch in parallel to find where something already lives in the user's
+  project: existing patterns, the files a change would touch, similar features
+  already built. Read-only.
 model: haiku
 disallowedTools: Write, Edit, NotebookEdit, Agent, ExitPlanMode
 ---

@@ -4,11 +4,11 @@
 
 The checks that decide whether a synthesized plan is *sound as a plan* — whether it schedules all the work, orders it correctly, tests what it changes, obeys the decisions the user made, and rests on verified claims. This is structural review, not narrative review: `readability-principles.md` asks whether the artifacts *read* well, and this file asks whether they *hold up*.
 
-Quoted by Phase 4.6 as a cluster source for `deep-plan:dp-readability-critic`, which carries this file's cluster alongside its own. The critic leaf supplies no rubric of its own; every question it applies comes from a file like this one.
+Quoted by Phase 4.6 as a cluster source for `deep-plan:dp-critic`, the same leaf that carries `readability-principles.md` on a sibling run. That leaf supplies no rubric of its own; every question it applies comes from a file like this one, which is why a new cluster source needs no new agent.
 
 Two boundaries keep this cluster from duplicating its neighbours:
 
-- **Test *structure*, not test *quality*.** Whether a code task has a `**Tests (TDD)**` block and whether its named test can fail first is checked here. Assertion strength, doubles, fixtures and test level belong to the `dp-test-critic` fleet running alongside; do not restate its findings.
+- **Test *structure*, not test *quality*.** Whether a code task has a `**Tests (TDD)**` block and whether its named test can fail first is checked here. Assertion strength, doubles, fixtures and test level belong to the fleet running against `test-principles.md` alongside this one; do not restate its findings.
 - **Findings, not rewrites.** The orchestrator owns `plan.md`. A finding names the defect and cites its location; it never proposes replacement task text.
 
 Cite everything. Evidence is a task number, a `## Decisions made` row, or a dossier section — a finding the orchestrator cannot locate is not actionable.
@@ -35,5 +35,5 @@ Tag each finding:
 
 Consumers:
 
-- `skills/deep-plan/SKILL.md` and `skills/deep-plan/references/phase-prompts.md` (Phase 4.6: quoted as a cluster source)
+- `skills/deep-plan/SKILL.md` (Phase 4.6: named as a cluster source) and `skills/deep-plan/references/phase-prompts.md` (Phase 4.6: the review target this cluster is handed)
 - `skills/design-review/references/fleet-orchestration.md` (cluster-source pairing list)

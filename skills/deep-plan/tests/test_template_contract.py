@@ -60,7 +60,7 @@ def test_template_skeleton_normalizes_to_valid() -> None:
     assert again == repaired, "repair must be idempotent"
 
 
-def test_template_declares_overview_markers_and_summary_rule() -> None:
+def test_template_wraps_the_task_overview_in_its_markers() -> None:
     text = TEMPLATE.read_text()
     skeleton = _extract_skeleton(text)
 
@@ -78,15 +78,19 @@ def test_template_declares_overview_markers_and_summary_rule() -> None:
         "Task overview region must sit between ## Architecture and ## Tasks"
     )
 
-    # Formatting rules name the opening summary-sentence rule and the
-    # folder member set.
-    assert "plain-English summary sentence" in text
-    for member in ("plan.md", "research.md", "probes.md", "design.md"):
-        assert member in text, f"folder member {member} not named in template"
 
-    # The dotted-sibling naming is gone.
-    assert "<slug>.probes.md" not in text
-    assert "<slug>.research.md" not in text
+def _first_table_header_cells(text: str, source: str) -> list[str]:
+    """The cell labels of the first pipe-table row in `text`.
+
+    Cells are compared rather than the raw row so that re-spacing a column is
+    not the same event as dropping one -- the template's tables are hand-aligned
+    and every column widens whenever a neighbour is renamed.
+    """
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("|"):
+            return [cell.strip() for cell in stripped.strip("|").split("|")]
+    raise AssertionError(f"{source}: no pipe-table row found")
 
 
 def test_template_declares_decisions_index_and_change_shape() -> None:
@@ -99,31 +103,25 @@ def test_template_declares_decisions_index_and_change_shape() -> None:
         "skeleton decisions row must carry a design.md# anchor-link placeholder"
     )
 
-    # Formatting rules declare the structured Change shape, the conditional
-    # architecture.md member, and the pointer to the readability rules' home.
-    assert "structured sub-bullets" in text, (
-        "formatting rules must state the summary-sentence-then-sub-bullets Change rule"
-    )
-    assert "architecture.md" in text, (
-        "the template must name the conditional architecture.md folder member"
-    )
-    assert "readability-principles.md" in text, (
-        "formatting rules must point at readability-principles.md authoring rules"
-    )
-
     # Probe entries explain themselves in four parts around the machine-stable
     # [probe N] first line.
     assert "[probe 1]:" in skeleton, "probes appendix must keep the [probe N] grep anchor"
     for part in ("Why:", "If it had failed:"):
         assert part in skeleton, f"probes appendix skeleton missing the {part!r} line"
 
-    # The dossier appendix opens with the coverage table and defers the dossier
-    # shape to its normative home instead of restating the retired labels.
-    assert "| # | Decision | Dossier | Not researched because |" in skeleton, (
-        "dossier appendix must open with the research coverage table header"
+    # The dossier appendix opens with the research coverage table, whose columns
+    # are what make an unresearched decision visible rather than merely absent.
+    heading = "### Coverage"
+    assert heading in skeleton, f"dossier appendix skeleton must open with {heading!r}"
+    coverage = _first_table_header_cells(
+        skeleton[skeleton.index(heading) :], "the research coverage table"
     )
-    assert "Canonical snippet" not in text, (
-        "the retired dossier section list must not survive in the template"
+    for column in ("Decision", "Dossier"):
+        assert column in coverage, (
+            f"research coverage table must keep its {column!r} column, got {coverage}"
+        )
+    assert any(cell.startswith("Not researched") for cell in coverage), (
+        f"research coverage table must keep its not-researched column, got {coverage}"
     )
 
     # The golden plan exercises the house style: an indexed decision row and a
