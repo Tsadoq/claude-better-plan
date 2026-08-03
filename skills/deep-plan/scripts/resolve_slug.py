@@ -16,31 +16,28 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Any
 
-from finalize_plan import PLAN_FILE_NAME, resolve_plan_path
+# Plugin-root lib/ carries the slug rules and marker convention shared with
+# every artifact family; see lib/artifact_common.py's module docstring for
+# why this is a sys.path bootstrap rather than a package import.
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
+import artifact_common  # noqa: E402
+from finalize_plan import PLAN_FILE_NAME, resolve_plan_path  # noqa: E402
 
-SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-MAX_SLUG_LEN = 60
+MAX_SLUG_LEN = artifact_common.MAX_SLUG_LEN
+normalise_slug = artifact_common.normalise_slug
+is_valid_slug = artifact_common.is_valid_slug
+
+# The plans family's legacy collision form: a slug can be taken by a flat
+# `<slug>.md` file as well as by a folder.
+_LEGACY_SUFFIXES = (".md",)
 
 
-def normalise_slug(raw: str) -> str:
-    s = raw.strip().lower()
-    s = re.sub(r"[^a-z0-9-]+", "-", s)
-    s = re.sub(r"-+", "-", s)
-    s = s.strip("-")
-    if len(s) > MAX_SLUG_LEN:
-        s = s[:MAX_SLUG_LEN].rstrip("-")
-    return s
-
-
-def is_valid_slug(s: str) -> bool:
-    if not s or len(s) > MAX_SLUG_LEN:
-        return False
-    return bool(SLUG_RE.match(s))
+def next_v_suffix(plans_dir: Path, slug: str) -> str:
+    return artifact_common.next_v_suffix(plans_dir, slug, _LEGACY_SUFFIXES)
 
 
 def extract_context(file_path: Path) -> str:
@@ -60,22 +57,6 @@ def extract_context(file_path: Path) -> str:
             if line.strip() or chunks:
                 chunks.append(line)
     return "\n".join(chunks).strip()
-
-
-def plan_exists(plans_dir: Path, slug: str) -> bool:
-    """A slug collides when it exists as a legacy flat file OR a plan folder."""
-    return (plans_dir / f"{slug}.md").exists() or (plans_dir / slug).exists()
-
-
-def next_v_suffix(plans_dir: Path, slug: str) -> str:
-    candidate = slug
-    n = 2
-    while plan_exists(plans_dir, candidate):
-        candidate = f"{slug}-v{n}"
-        n += 1
-        if n > 999:
-            return f"{slug}-v{n}"
-    return candidate
 
 
 def main() -> int:
@@ -112,7 +93,7 @@ def main() -> int:
 
     folder = plans_dir / normalised
     flat = plans_dir / f"{normalised}.md"
-    if folder.exists() or flat.exists():
+    if artifact_common.slug_taken(plans_dir, normalised, _LEGACY_SUFFIXES):
         result["collision"] = True
         # Prefer the folder's plan.md; fall back to the legacy flat file.
         existing = resolve_plan_path(folder) if folder.exists() else flat

@@ -24,6 +24,7 @@ testpaths = [
     "skills/deep-plan/tests",
     "skills/design-review/tests",
     "skills/tdd-review/tests",
+    "skills/product-artifacts/tests",
 ]
 # importlib mode isolates the sibling test dirs from each other, so same-named
 # test modules or conftests across skills cannot collide on import.
@@ -31,9 +32,16 @@ addopts = "--import-mode=importlib"
 
 [tool.mypy]
 # Strict typing is enforced only on the helper scripts and hooks (stdlib-only,
-# fully annotated). The test suite uses dynamic importlib loading that strict
-# mypy cannot model, so it is intentionally out of scope here; CI invokes mypy
-# with these two paths explicitly.
+# fully annotated), plus the plugin-root shared library. The test suite uses
+# dynamic importlib loading that strict mypy cannot model, so it is
+# intentionally out of scope here; CI invokes bare `mypy --strict`, so this
+# `files` list is what owns type-check discovery.
 python_version = "3.12"
 strict = true
-files = ["skills/deep-plan/scripts", "skills/deep-plan/hooks"]
+mypy_path = "$MYPY_CONFIG_FILE_DIR/lib"
+files = [
+    "lib",
+    "skills/deep-plan/scripts",
+    "skills/deep-plan/hooks",
+    "skills/product-artifacts/scripts",
+]
