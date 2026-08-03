@@ -48,7 +48,7 @@ def test_artifact_family_pins_member_chain_and_provenance_literal() -> None:
     # Chain order: each member's first occurrence must come after the previous
     # member's first occurrence, so the prose cannot silently reorder the chain.
     positions = [text.find(member) for member in MEMBERS_IN_CHAIN_ORDER]
-    for member, pos in zip(MEMBERS_IN_CHAIN_ORDER, positions):
+    for member, pos in zip(MEMBERS_IN_CHAIN_ORDER, positions, strict=True):
         assert pos != -1, f"artifact-family.md is missing chain member {member!r}"
     assert positions == sorted(positions), (
         f"artifact-family.md must name the five members in chain order "
