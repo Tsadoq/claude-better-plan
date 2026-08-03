@@ -14,14 +14,15 @@ predecessor. No member has two upstreams, and the order below is fixed.
 
 | Member | Upstream | Position | Owning skill |
 |---|---|---|---|
-| `brief.md` | (none) | 1 | tbd |
-| `discovery.md` | `brief.md` | 2 | tbd |
-| `requirements.md` | `discovery.md` | 3 | tbd |
-| `spec.md` | `requirements.md` | 4 | tbd |
-| `roadmap.md` | `spec.md` | 5 | tbd |
+| `brief.md` | (none) | 1 | `product-brief` |
+| `discovery.md` | `brief.md` | 2 | `product-discovery` |
+| `requirements.md` | `discovery.md` | 3 | `product-requirements` |
+| `spec.md` | `requirements.md` | 4 | `product-spec` |
+| `roadmap.md` | `spec.md` | 5 | `product-roadmap` |
 
-The "Owning skill" column is filled in by whichever of the beats that derive
-members from this table lands second; until then both cells read `tbd`.
+The "Owning skill" column is the single published home of the member-to-beat
+derivation: a skill that needs to know which beat owns a member reads this
+column rather than keeping its own copy.
 
 Each member also has a closed set of required H2 section names. Only the
 names are pinned here -- the prose a beat writes under each heading is that
