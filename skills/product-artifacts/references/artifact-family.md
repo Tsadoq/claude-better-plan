@@ -24,11 +24,15 @@ The "Owning skill" column is the single published home of the member-to-beat
 derivation: a skill that needs to know which beat owns a member reads this
 column rather than keeping its own copy.
 
-Each member also has a closed set of required H2 section names. Only the
-names are pinned here -- the prose a beat writes under each heading is that
-beat's concern, not this substrate's.
+Each member also has a closed list of required H2 section names, given below
+in the order the sections appear in the member. Order is pinned as well as
+membership: a beat that emits the same sections in a different sequence has
+written a different document, and a beat that needs its own section order
+reads it from this list rather than keeping a second copy that could drift.
+Only the names and their order are pinned here -- the prose a beat writes
+under each heading is that beat's concern, not this substrate's.
 
-- `brief.md`: `## Problem`, `## Audience`, `## Success criteria`, `## Non-goals`
+- `brief.md`: `## Press release`, `## External FAQ`, `## Internal FAQ`
 - `discovery.md`: `## Signals`, `## Constraints`, `## Open questions`
 - `requirements.md`: `## Scope`, `## Requirements`, `## Out of scope`
 - `spec.md`: `## Interfaces`, `## Behavior`, `## Edge cases`
@@ -91,4 +95,17 @@ no `SKILL.md` of its own to publish it from.
 
 This file is the canonical home of the suite's single unknown-value marker
 token, the one literal a beat writes into any slot that would otherwise carry
-an unsourced figure; the literal itself is landed by issue #16, not here.
+an unsourced figure:
+
+```
+[UNKNOWN: <what is missing> -- <who would know>]
+```
+
+- `<what is missing>` names the absent value in the terms the surrounding
+  sentence would have used had the value been known.
+- `<who would know>` names the person, team or source that could establish it,
+  so a reader meets a routed question rather than a dead end.
+- Both fields are mandatory, and a marker with either field left empty is
+  malformed. The payload is the whole point of the token: without it the
+  marker says only that something, somewhere, is unknown, which a reader could
+  already tell from the sentence it interrupts.
