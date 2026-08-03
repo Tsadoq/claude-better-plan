@@ -143,7 +143,7 @@ BUDGETS: dict[str, int] = {
     # with room for a phase to gain real detail, but far enough below the former
     # that a restated paragraph shows up as a failure.
     "phase_prompts_tokens": 2400,
-    # fleet-orchestration.md is quoted by four callers, so every line of it is
+    # fleet-orchestration.md is quoted by five callers, so every line of it is
     # paid for in an orchestrator's context whether or not a fleet ever runs.
     # It measured 178 lines while it still carried the leaf's judging prose;
     # the cap is the ratchet that keeps that prose in `agents/dp-critic.md`.
@@ -159,6 +159,7 @@ DEEP_PLAN_SKILL = "skills/deep-plan/SKILL.md"
 EXECUTE_SKILL = "skills/deep-plan-execute/SKILL.md"
 DESIGN_REVIEW_SKILL = "skills/design-review/SKILL.md"
 TDD_REVIEW_SKILL = "skills/tdd-review/SKILL.md"
+PRODUCT_REVIEW_SKILL = "skills/product-review/SKILL.md"
 PHASE_PROMPTS = "skills/deep-plan/references/phase-prompts.md"
 EDGE_FLOWS = "skills/deep-plan/references/edge-flows.md"
 FLEET_RECIPE = "skills/design-review/references/fleet-orchestration.md"
@@ -348,11 +349,13 @@ GUARANTEES: tuple[Guarantee, ...] = (
         "path_exists",
         {"region": PHASE_46, "target": DESIGN_PRINCIPLES, "cited_as": "design-principles.md"},
     ),
-    # One critic agent serves four cluster sources, so the launch has to state
-    # the type outright. These three entries -- with the tdd-review and
-    # design-review skills' own -- are every launch site in the plugin; a site
-    # that stops naming the type has gone back to letting the harness match on
-    # agent descriptions, which is exactly what merging the critics removed.
+    # One critic agent serves five cluster sources, so the launch has to state
+    # the type outright. Five entries assert that it does -- this one, the
+    # design-review, tdd-review and product-review skills' own, and
+    # `implement-task-agent`'s -- and between them they are every launch site in
+    # the plugin; a site that stops naming the type has gone back to letting the
+    # harness match on agent descriptions, which is exactly what merging the
+    # critics removed.
     Guarantee(
         "deep-plan-skill.phase-46-launches-the-critic-by-agent-type",
         DEEP_PLAN_SKILL,
@@ -661,6 +664,16 @@ GUARANTEES: tuple[Guarantee, ...] = (
         "path_exists",
         {"target": PLAN_INTEGRITY_PRINCIPLES},
     ),
+    # The fifth cluster source is a family, not a file: `/product-review`
+    # composes the rubric path from the reviewed member's owning beat, so the
+    # recipe registers the shape those paths share and `path_exists` -- which
+    # resolves one literal citation -- has nothing to resolve.
+    Guarantee(
+        "fleet-recipe.registers-the-product-cluster-source",
+        FLEET_RECIPE,
+        "anchor_regex",
+        {"patterns": (r"skills/product-\*/references/product-\*-principles\.md",)},
+    ),
     # --- the principles files themselves ----------------------------------
     Guarantee(
         "design-principles.section-spine",
@@ -749,6 +762,29 @@ GUARANTEES: tuple[Guarantee, ...] = (
         TDD_REVIEW_SKILL,
         "anchor_regex",
         {"patterns": (r"deep-plan:dp-critic",)},
+    ),
+    # The third review skill gets no `cites-its-principles-file` row, and its
+    # absence is the point rather than an oversight: this skill composes the
+    # rubric path from the reviewed member's owning beat, so there is no one
+    # path to pin. That the composed paths resolve to shipped files is asserted
+    # by derivation in skills/product-review/tests/test_product_review_contract.py.
+    Guarantee(
+        "product-review-skill.cites-the-fleet-recipe",
+        PRODUCT_REVIEW_SKILL,
+        "path_exists",
+        {"target": FLEET_RECIPE},
+    ),
+    Guarantee(
+        "product-review-skill.launches-the-critic-by-agent-type",
+        PRODUCT_REVIEW_SKILL,
+        "anchor_regex",
+        {"patterns": (r"deep-plan:dp-critic",)},
+    ),
+    Guarantee(
+        "product-review-skill.name-matches-its-directory",
+        PRODUCT_REVIEW_SKILL,
+        "frontmatter_field",
+        {"field": "name", "contains": "product-review"},
     ),
     # --- agents/dp-critic.md ----------------------------------------------
     # The leaf reads its own cluster source. That is what shortened the chain
