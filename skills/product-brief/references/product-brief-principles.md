@@ -95,7 +95,6 @@ The problem is real but not worth anyone's money or attention.
 The four H2 headings above and the four-cluster H3 structure under "Review-time red flags" are pinned by `skills/product-brief/tests/test_product_brief_contract.py` (`test_principles_expose_four_red_flag_clusters`); renaming a section breaks callers that quote it by name, and adding a fifth cluster changes how many finders a review launches, so change the test and every caller in the same commit. The files that quote sections of this file are:
 
 - `skills/product-brief/SKILL.md` (cites this file by `${CLAUDE_PLUGIN_ROOT}` path as the rubric a brief is written against, and restates no cluster)
-
-No review skill quotes the clusters yet: `product-review` (issue #22) is the intended consumer and ships separately. Add it to the list above in the commit that ships it.
+- `skills/product-review/SKILL.md` (fleet review of `brief.md`: one finder per red-flag cluster, quoted verbatim; composes this path from the member's owning beat rather than naming it, so a rename that puts this file beyond that composition's reach fails `test_rubric_template_derives_every_shipped_principles_file`, not any test here)
 
 This file cites two others and copies neither. `${CLAUDE_PLUGIN_ROOT}/skills/product-brief/references/pr-faq-template.md` owns what each section of a brief holds, and `${CLAUDE_PLUGIN_ROOT}/skills/product-artifacts/references/artifact-family.md` owns the section names, the provenance format and the unknown marker. On disagreement, those files win and a question here is the thing that changes.
