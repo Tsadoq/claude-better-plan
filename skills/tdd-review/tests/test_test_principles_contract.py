@@ -2,10 +2,11 @@
 
 Pins what a substring cannot express: the red-flag cluster count in
 skills/tdd-review/references/test-principles.md, the tdd-review skill
-wrapper's frontmatter schema and router description budget, the synthesis
-lens catalogue, and the red-then-green-then-rerun ordering in the implementer
-agent. Which files must cite which rubric is pinned instead by
-tests/guarantees.py. Stdlib only, so CI does not need pyyaml.
+wrapper's frontmatter schema, the synthesis lens catalogue, and the
+red-then-green-then-rerun ordering in the implementer agent. Which files must
+cite which rubric is pinned instead by tests/guarantees.py, and how long a
+frontmatter description may be by tests/test_description_budget.py. Stdlib
+only, so CI does not need pyyaml.
 
 Runnable two ways:
     python3 skills/tdd-review/tests/test_test_principles_contract.py
@@ -105,19 +106,10 @@ def test_tdd_review_skill_contract() -> None:
     assert "disable-model-invocation" not in frontmatter, (
         "tdd-review must stay model-invocable: drop the disable-model-invocation key"
     )
-
-    desc_start = next(i for i, line in enumerate(lines) if line.startswith("description:"))
-    desc_lines = [lines[desc_start]]
-    for line in lines[desc_start + 1 :]:
-        if not line.startswith((" ", "\t")):
-            break
-        desc_lines.append(line)
-    description = "\n".join(desc_lines)
-    # 1024 chars is Claude Code's budget for skill descriptions surfaced to
-    # the model-invocation router; longer descriptions get truncated there.
-    assert len(description) < 1024, (
-        f"description is {len(description)} chars; model-invocable descriptions must stay under 1024"
-    )
+    # How long that description may be is not asserted here. The cap on a
+    # listing entry is a property of the whole plugin's frontmatter, not of
+    # this skill, and tests/test_description_budget.py holds it for every skill
+    # at once -- including this one, the day it is added.
 
 
 def test_lens_catalogue_is_a_synthesis_checklist() -> None:
