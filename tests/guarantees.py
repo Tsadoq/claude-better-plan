@@ -81,14 +81,49 @@ class Guarantee(NamedTuple):
 # Every number a size assertion compares against lives here rather than in the
 # test that reads it, so the limit and the reason for it stay in one place.
 BUDGETS: dict[str, int] = {
-    # Claude Code truncates a skill or agent `description` past this length,
-    # which silently costs the routing keywords at its tail.
-    "description_chars": 1024,
+    # Claude Code truncates one skill-listing entry -- a skill's `description`
+    # and `when_to_use` taken together -- past this length, which silently costs
+    # whatever routing keywords sit at its tail. This is the harness's number,
+    # settable as `skillListingMaxDescChars`; the published figure was 250 until
+    # v2.1.105 raised it to 1,536. The separator the harness joins the two fields
+    # with is undocumented, so measuring their concatenation may undercount the
+    # real entry by a character or two -- recorded here rather than guessed at in
+    # the measurement, since the headroom dwarfs it. Skills only: the sub-agents
+    # reference states no character limit and has no `when_to_use` key, so agent
+    # descriptions answer to the word budget below and nothing else.
+    "listing_entry_chars": 1536,
+    # The share of the whole skill listing this plugin allows itself. Unlike the
+    # per-entry cap this is not the harness's number: the harness budgets the
+    # listing and drops entries when it overflows, but it never asks how much of
+    # that budget came from one plugin. Four terms derive it.
+    #
+    #   200,000 tokens    the smaller of the two current context tiers, chosen
+    #                     deliberately: a ceiling derived from the 1M tier would
+    #                     pass for the users with the most room and overflow for
+    #                     everyone else.
+    #   x 1 percent       the documented fraction of the window the listing gets:
+    #                     "the budget scales at 1% of the model's context window".
+    #   x 4 chars/token   English prose. The fraction is quoted against a token
+    #                     window while the budget is spent in characters, so some
+    #                     term has to bridge the two. This is the one to
+    #                     challenge first: it is the only term no documentation
+    #                     states, and the ceiling moves with it.
+    #   / 4               this plugin's share, and the openly judgemental term.
+    #                     The listing is shared with every other installed plugin
+    #                     and with the user's own skills; a plugin claiming more
+    #                     than a quarter of that is claiming most of it.
+    #
+    # A deployment can raise the real budget -- `skillListingBudgetFraction`
+    # resets the percentage, `SLASH_COMMAND_TOOL_CHAR_BUDGET` replaces it with a
+    # flat character count -- so a given session may have far more room than
+    # this. That is the reason to hold the line rather than to relax it: what we
+    # spend here is spent in every session that did *not* raise the budget.
+    "listing_total_chars": 2000,
     # A description's routing job is done by the condition it opens with, and 40
     # words is room enough for that condition in every skill and agent here. The
     # ones that measured over it -- 96, 85, 79 -- were all spending the overage
     # on body mechanics: which phase launches an agent, which script it calls.
-    # Unlike `description_chars` this is our own target, not the harness's cap:
+    # Unlike `listing_entry_chars` this is our own target, not the harness's cap:
     # nothing truncates at 40 words. What it buys is that the ten descriptions a
     # router reads on every turn stay collectively small, which is the only cost
     # in this plugin no user can opt out of.
@@ -1120,6 +1155,68 @@ def frontmatter_value(text: str, field: str) -> str | None:
     scalars, and then the guarantee and the pin would protect different files.
     """
     return _field_value(_frontmatter(text), field)
+
+
+def listing_entry(text: str) -> str | None:
+    """The text one `SKILL.md` contributes to the model-facing skill listing.
+
+    `None` means the file contributes nothing at all. The harness documents
+    `disable-model-invocation: true` as removing the skill from Claude's
+    context entirely, so its description never reaches the listing and never
+    spends any of the listing's shared budget. That is a different answer from
+    `""`, which is a skill that *is* listed carrying no text -- unroutable, but
+    still an entry -- so callers that sum entries must skip `None` rather than
+    treat it as zero-length.
+
+    Otherwise the entry is `description` followed by `when_to_use`, which the
+    frontmatter reference describes as appended to `description` in the listing
+    and counted against the same per-entry cap. Both are collapsed to one line,
+    because that is the form the cap applies to rather than the source's
+    indentation, and an absent `when_to_use` contributes nothing.
+
+    The neighbouring flag `user-invocable: false` deliberately does not exclude:
+    its documented row reads "Description always in context", and it controls
+    slash-menu visibility only. Keying on it would under-count the listing, and
+    an aggregate assertion built on an under-count passes while over budget.
+
+    Public because the per-entry cap and the aggregate ceiling have to measure
+    the same string. Two definitions of what reaches the listing would drift,
+    and the aggregate is the one whose drift is silent.
+    """
+    if scalar_text(frontmatter_value(text, "disable-model-invocation")).lower() == "true":
+        return None
+    entry = (
+        scalar_text(frontmatter_value(text, "description")),
+        scalar_text(frontmatter_value(text, "when_to_use")),
+    )
+    return " ".join(field for field in entry if field)
+
+
+# `description: |` leaves the block-scalar indicator on the key's own line, and
+# `_field_value` returns it along with the rest of the raw value. It is YAML
+# syntax rather than prose, so it comes off before anything measures the text;
+# counted, it would report every folded value as one word and one character
+# longer than it is. Matched at end-of-string as well as before whitespace, so
+# an *empty* block scalar reduces to `""` instead of measuring as one word.
+_BLOCK_SCALAR = re.compile(r"^[|>][+-]?\d*(?:\s|$)")
+
+
+def scalar_text(raw: str | None) -> str:
+    """One frontmatter value as its reader sees it: a single collapsed line.
+
+    Whitespace is collapsed because both YAML block styles turn the folded
+    source lines into single separators, so the result matches the value the
+    harness works with rather than the source's line breaks and indentation. A
+    missing key reads as `""`, which lets a caller concatenate optional fields
+    without a presence check per field.
+
+    Public because more than one budget needs it: the word budget measures
+    `description` on its own while the character cap measures the whole entry,
+    and the two only stay comparable while they normalise the same way.
+    """
+    if raw is None:
+        return ""
+    return " ".join(_BLOCK_SCALAR.sub("", raw.strip(), count=1).split())
 
 
 def _frontmatter(text: str) -> str:
