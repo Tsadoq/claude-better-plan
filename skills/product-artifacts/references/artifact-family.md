@@ -64,6 +64,12 @@ provenance line, matched anywhere in the member's text:
   that will not match the object id `git hash-object` reports in a
   SHA-256 repository.
 
+A beat writing a member does not assemble that line itself: it reads the
+finished line off `product_artifact.py --provenance-line --slug <slug>
+--member <member>`, whose `line` field is null whenever there is no upstream
+to record -- the chain's first member, or an upstream not yet written -- and
+which exits 0 in those cases rather than treating them as errors.
+
 ## Staleness
 
 A freshness check compares each member's recorded provenance sha against the

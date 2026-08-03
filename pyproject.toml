@@ -27,6 +27,7 @@ testpaths = [
     "skills/product-artifacts/tests",
     "skills/product-status/tests",
     "skills/product-brief/tests",
+    "skills/product-discovery/tests",
     "skills/product-review/tests",
 ]
 # importlib mode isolates the sibling test dirs from each other, so same-named

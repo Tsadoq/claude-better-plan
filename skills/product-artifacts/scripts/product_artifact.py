@@ -5,14 +5,15 @@ Usage:
     product_artifact.py --exists --slug <slug> --product-dir <dir>
     product_artifact.py --resolve-slug --slug <slug> --product-dir <dir>
     product_artifact.py --check-freshness --product-dir <dir> [--slug <slug>]
+    product_artifact.py --provenance-line --slug <slug> --member <member> --product-dir <dir>
     product_artifact.py --ensure-folder --slug <slug> --product-dir <dir>
 
-`--exists`, `--resolve-slug` and `--check-freshness` each answer a caller's
-question about chain state in a single call and are read-only: neither
-creates a folder or a member file. `--ensure-folder` is the package's one
-writing entry point: it creates the slug folder (parents, exist-ok) and
-then regenerates the product index unconditionally, so a folder without its
-index row is never a state a caller can observe (see
+`--exists`, `--resolve-slug`, `--check-freshness` and `--provenance-line`
+each answer a caller's question about chain state in a single call and are
+read-only: none creates a folder or a member file. `--ensure-folder` is the
+package's one writing entry point: it creates the slug folder (parents,
+exist-ok) and then regenerates the product index unconditionally, so a folder
+without its index row is never a state a caller can observe (see
 `references/artifact-family.md`'s `## Re-run behaviour`).
 
 The member chain and its provenance/staleness rules are published in
@@ -63,6 +64,12 @@ PROVENANCE_RE = re.compile(
     r"^[ \t]*\*\*Derived from\*\*:[ \t]*(\S+)[ \t]+\(([0-9a-f]{40})\)[ \t]*$",
     re.MULTILINE,
 )
+
+# The same line as a template, for `cmd_provenance_line` to fill. It sits
+# next to `PROVENANCE_RE` because the two describe one format from opposite
+# ends -- emit and validate -- and a change to either that is not mirrored in
+# the other produces lines this module writes and then refuses.
+_PROVENANCE_TEMPLATE = "**Derived from**: {upstream} ({sha})"
 
 
 def blob_sha(data: bytes) -> str:
@@ -213,6 +220,51 @@ def cmd_check_freshness(raw_slug: str | None, product_dir: Path) -> dict[str, An
     }
 
 
+def cmd_provenance_line(raw_slug: str, member: str, product_dir: Path) -> dict[str, Any]:
+    """The finished provenance line to write into `member`, plus the
+    `upstream` and `sha` it was built from, so no caller assembles the format
+    or recomputes the hash itself.
+
+    `line` is built from `_PROVENANCE_TEMPLATE`, the shape `PROVENANCE_RE`
+    matches, which is what keeps the line this emits acceptable to the
+    freshness check that reads it back.
+
+    Four cases yield nulls rather than an exception, and all four still exit
+    0, matching `cmd_check_freshness`'s stance that a finding is never an
+    error: `upstream`, `sha` and `line` are all null when `member` is the
+    chain head or is not a chain member at all, and `sha` and `line` are null
+    when the slug is invalid or the upstream member's file does not exist yet.
+    Callers reach here while a chain is half-written -- asking for
+    `discovery.md`'s line before `brief.md` has been saved is ordinary, not a
+    mistake -- so "there is no line to write" is an answer they must be able
+    to read off the payload, not a traceback each of them wraps.
+    """
+    slug = artifact_common.normalise_slug(raw_slug)
+    upstream = UPSTREAM.get(member)
+
+    sha: str | None = None
+    line: str | None = None
+    # The validity check is what stops an invalid slug from being hashed
+    # against the wrong folder: `normalise_slug` can return the empty string,
+    # and `product_dir / ""` is `product_dir` itself, so an unguarded join
+    # would hash a stray `brief.md` lying beside the slug folders and hand
+    # back a confident line for a member that has no chain at all. Same rule
+    # as `_absent_members`: an invalid slug gets no folder constructed for it.
+    if upstream is not None and artifact_common.is_valid_slug(slug):
+        upstream_path = product_dir / slug / upstream
+        if upstream_path.exists():
+            sha = blob_sha(upstream_path.read_bytes())
+            line = _PROVENANCE_TEMPLATE.format(upstream=upstream, sha=sha)
+
+    return {
+        "slug": slug,
+        "member": member,
+        "upstream": upstream,
+        "sha": sha,
+        "line": line,
+    }
+
+
 # The index README's file name and marker pair, module-level so both the
 # writer here and a future reader agree on one literal each.
 PRODUCT_README_NAME = "README.md"
@@ -292,12 +344,16 @@ def main() -> int:
     parser.add_argument("--exists", action="store_true")
     parser.add_argument("--resolve-slug", action="store_true")
     parser.add_argument("--check-freshness", action="store_true")
+    parser.add_argument("--provenance-line", action="store_true")
     parser.add_argument("--ensure-folder", action="store_true")
-    # Required by --exists/--resolve-slug/--ensure-folder, optional for
-    # --check-freshness (see below); left unrequired here so argparse's own
-    # usage-text exit never fires and every failure this script reports is
+    # Required by every entry point except --check-freshness, which alone
+    # accepts it being absent (see below); left unrequired here so argparse's
+    # own usage-text exit never fires and every failure this script reports is
     # JSON.
     parser.add_argument("--slug")
+    # Meaningful only to --provenance-line, which names one member of the
+    # chain; unrequired here for the same JSON-only reason as --slug.
+    parser.add_argument("--member")
     parser.add_argument("--product-dir", required=True)
     args = parser.parse_args()
 
@@ -308,6 +364,7 @@ def main() -> int:
         "exists": args.exists,
         "resolve_slug": args.resolve_slug,
         "check_freshness": args.check_freshness,
+        "provenance_line": args.provenance_line,
         "ensure_folder": args.ensure_folder,
     }
     chosen = [name for name, on in entry_points.items() if on]
@@ -317,8 +374,8 @@ def main() -> int:
                 {
                     "error": (
                         "exactly one of --exists, --resolve-slug, --check-freshness, "
-                        f"--ensure-folder is required, got {len(chosen)} "
-                        f"({', '.join(chosen) or 'none'})"
+                        f"--provenance-line, --ensure-folder is required, got "
+                        f"{len(chosen)} ({', '.join(chosen) or 'none'})"
                     )
                 },
                 indent=2,
@@ -326,10 +383,10 @@ def main() -> int:
         )
         return 1
 
-    # --slug is required for --exists/--resolve-slug/--ensure-folder;
-    # --check-freshness alone accepts it being absent (see
-    # cmd_check_freshness).
-    if chosen[0] in ("exists", "resolve_slug", "ensure_folder") and args.slug is None:
+    # Every entry point but --check-freshness needs a slug to work from;
+    # --check-freshness alone accepts it being absent, because absent means
+    # "every slug" there (see cmd_check_freshness).
+    if chosen[0] != "check_freshness" and args.slug is None:
         print(
             json.dumps(
                 {"error": f"--slug is required for --{chosen[0].replace('_', '-')}"},
@@ -338,12 +395,20 @@ def main() -> int:
         )
         return 1
 
+    # --provenance-line answers about one named member, so it has no default
+    # to fall back on; the other four entry points ignore --member entirely.
+    if chosen[0] == "provenance_line" and args.member is None:
+        print(json.dumps({"error": "--member is required for --provenance-line"}, indent=2))
+        return 1
+
     product_dir = Path(args.product_dir).expanduser().resolve()
 
     if args.exists:
         result = cmd_exists(args.slug, product_dir)
     elif args.resolve_slug:
         result = cmd_resolve_slug(args.slug, product_dir)
+    elif args.provenance_line:
+        result = cmd_provenance_line(args.slug, args.member, product_dir)
     elif args.ensure_folder:
         result = cmd_ensure_folder(args.slug, product_dir)
     else:
