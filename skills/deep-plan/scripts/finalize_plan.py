@@ -39,6 +39,12 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+# Plugin-root lib/ carries the marker convention shared with every artifact
+# family; see lib/artifact_common.py's module docstring for why this is a
+# sys.path bootstrap rather than a package import.
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
+import artifact_common  # noqa: E402
+
 # Plan-folder layout: every plan lives in plans_dir/<slug>/ with these
 # fixed member names. resolve_slug.py and load_tasks.py import them from
 # here so the layout has a single source of truth.
@@ -51,10 +57,17 @@ DRAFT_SUFFIX = "-draft"
 
 # Normative marker literals for generated regions. Content between a
 # begin/end pair is owned by this script and rewritten wholesale.
+#
+# The task-overview markers predate lib/artifact_common.py's `{name}-index`
+# naming convention (no "-index" infix) and are frozen into shipped golden
+# fixtures and the plan-file template, so they stay literal rather than
+# routing through `markers()` -- that would render a byte-different pair
+# and make every existing archived plan's overview region unrecognisable.
 OVERVIEW_BEGIN = "<!-- deep-plan-task-overview:begin generated: do not edit -->"
 OVERVIEW_END = "<!-- deep-plan-task-overview:end -->"
-INDEX_BEGIN = "<!-- deep-plan-index:begin generated: do not edit -->"
-INDEX_END = "<!-- deep-plan-index:end -->"
+_INDEX_MARKERS = artifact_common.markers("deep-plan")
+INDEX_BEGIN = _INDEX_MARKERS.begin
+INDEX_END = _INDEX_MARKERS.end
 
 # The authoritative status vocabulary for the `**Status**:` line in
 # plan.md and the plans_dir README index.
@@ -614,27 +627,13 @@ def regenerate_index(plans_dir: Path) -> Path:
         stamped = dm.group(1).strip() if dm else ""
         rows.append(f"| [{slug}]({link}) | {title} | {status} | {stamped} |")
 
-    region = "\n".join(
-        [
-            INDEX_BEGIN,
-            "| Plan | Title | Status | Date |",
-            "|------|-------|--------|------|",
-            *rows,
-            INDEX_END,
-        ]
+    region = artifact_common.build_table_region(
+        _INDEX_MARKERS, ["Plan", "Title", "Status", "Date"], rows
     )
 
     readme = plans_dir / "README.md"
-    if readme.exists():
-        text = readme.read_text()
-        begin = text.find(INDEX_BEGIN)
-        end = text.find(INDEX_END)
-        if begin != -1 and end != -1 and end > begin:
-            text = text[:begin] + region + text[end + len(INDEX_END) :]
-        else:
-            text = text.rstrip() + "\n\n" + region + "\n"
-    else:
-        text = "# Plans\n\n" + region + "\n"
+    text = readme.read_text() if readme.exists() else "# Plans\n"
+    text = artifact_common.splice_region(text, _INDEX_MARKERS, region)
     readme.write_text(text)
     return readme
 

@@ -560,6 +560,53 @@ def test_index_regeneration_is_deterministic() -> None:
         assert "README" not in region, "the index must not list itself"
 
 
+def test_index_region_is_byte_identical_and_built_from_shared_primitives() -> None:
+    # Companion to test_index_regeneration_is_deterministic (which owns
+    # repeat-run stability): this test owns the exact rendered bytes and the
+    # delegation to the shared lib/ primitives.
+    with tempfile.TemporaryDirectory() as d:
+        plans_dir = Path(d)
+        (plans_dir / "alpha").mkdir()
+        (plans_dir / "alpha" / "plan.md").write_text(
+            "# Alpha plan\n\n**Status**: approved\n**Date**: 2026-07-01\n\n## Context\n\nx\n"
+        )
+        (plans_dir / "beta").mkdir()
+        (plans_dir / "beta" / "plan.md").write_text("# Beta plan\n\n## Context\n\nx\n")
+        (plans_dir / "legacy-plan.md").write_text("# Old flat plan\n\n## Context\n\nx\n")
+
+        readme = finalize.regenerate_index(plans_dir)
+        text = readme.read_text()
+        begin = text.index(finalize.INDEX_BEGIN)
+        end = text.index(finalize.INDEX_END) + len(finalize.INDEX_END)
+        region = text[begin:end]
+
+        golden = "\n".join(
+            [
+                "<!-- deep-plan-index:begin generated: do not edit -->",
+                "| Plan | Title | Status | Date |",
+                "|---|---|---|---|",
+                "| [alpha](alpha/plan.md) | Alpha plan | approved | 2026-07-01 |",
+                "| [beta](beta/plan.md) | Beta plan | draft |  |",
+                "| [legacy-plan](legacy-plan.md) | Old flat plan | legacy |  |",
+                "<!-- deep-plan-index:end -->",
+            ]
+        )
+        assert region.splitlines() == golden.splitlines()
+
+        # Not a re-derivation from the same rows (that would pass even if
+        # regenerate_index stopped calling the shared lib and inlined
+        # today's bytes): this checks the marker pair finalize_plan.py
+        # actually spliced on -- the region's own begin/end lines -- against
+        # a fresh, independent call to artifact_common.markers("deep-plan"),
+        # and against the module constants that call is supposed to define.
+        shared_markers = finalize.artifact_common.markers("deep-plan")
+        region_lines = region.splitlines()
+        assert region_lines[0] == shared_markers.begin
+        assert region_lines[-1] == shared_markers.end
+        assert finalize.INDEX_BEGIN == shared_markers.begin
+        assert finalize.INDEX_END == shared_markers.end
+
+
 if __name__ == "__main__":
     import sys
     import traceback

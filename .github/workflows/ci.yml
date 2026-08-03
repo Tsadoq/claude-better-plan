@@ -28,10 +28,12 @@ jobs:
         run: pip install ruff mypy "pytest>=9,<10" tiktoken
 
       - name: Lint (ruff)
-        run: ruff check skills
+        run: ruff check lib skills
 
+      # Discovery comes from pyproject.toml's [tool.mypy] files; no explicit
+      # path list here, the way testpaths already owns test discovery below.
       - name: Type-check (mypy --strict)
-        run: mypy --strict skills/deep-plan/scripts skills/deep-plan/hooks
+        run: mypy --strict
 
       # Discovery comes from pyproject.toml's testpaths; no per-skill paths here.
       - name: Test (pytest)
