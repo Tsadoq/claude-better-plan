@@ -4,7 +4,24 @@
       "Edit(/docs/plans/**)",
       "Write(/docs/plans/**)",
       "Bash(mv docs/plans/*)",
-      "Bash(test ! -e docs/plans/*)"
+      "Bash(test ! -e docs/plans/*)",
+      "Edit(/tests/**)",
+      "Write(/tests/**)",
+      "Edit(/skills/tdd-review/tests/**)",
+      "Edit(/skills/product-brief/**)",
+      "Write(/skills/product-brief/**)",
+      "Edit(/skills/product-artifacts/**)",
+      "Write(/skills/product-artifacts/**)",
+      "Edit(/skills/product-roadmap/**)",
+      "Write(/skills/product-roadmap/**)",
+      "Edit(/pyproject.toml)",
+      "Edit(/skills/product-review/**)",
+      "Write(/skills/product-review/**)",
+      "Edit(/skills/design-review/**)",
+      "Bash(python3 -m pytest:*)",
+      "Bash(uvx pytest:*)",
+      "Bash(git diff:*)",
+      "Bash(git ls-files:*)"
     ]
   }
 }
