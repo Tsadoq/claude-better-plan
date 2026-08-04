@@ -84,41 +84,61 @@ BUDGETS: dict[str, int] = {
     # Claude Code truncates one skill-listing entry -- a skill's `description`
     # and `when_to_use` taken together -- past this length, which silently costs
     # whatever routing keywords sit at its tail. This is the harness's number,
-    # settable as `skillListingMaxDescChars`; the published figure was 250 until
-    # v2.1.105 raised it to 1,536. The separator the harness joins the two fields
-    # with is undocumented, so measuring their concatenation may undercount the
-    # real entry by a character or two -- recorded here rather than guessed at in
-    # the measurement, since the headroom dwarfs it. Skills only: the sub-agents
-    # reference states no character limit and has no `when_to_use` key, so agent
-    # descriptions answer to the word budget below and nothing else.
+    # settable as `skillListingMaxDescChars`; the published figure was 250 before
+    # it was raised to 1,536. No release is cited for that raise on purpose: the
+    # CHANGELOG names none of these settings keys anywhere, so any version number
+    # here would be someone's guess, and the two guesses in circulation disagree.
+    # The 1,536 itself is documented and current -- it is the figure that has to
+    # hold, not the release that introduced it.
+    #
+    # The separator the harness joins the two fields with is undocumented, so
+    # measuring their concatenation may undercount the real entry by a character
+    # or two -- recorded here rather than guessed at in the measurement, since
+    # the headroom dwarfs it. Skills only: the sub-agents reference states no
+    # character limit and has no `when_to_use` key, so agent descriptions answer
+    # to the word budget below and nothing else.
     "listing_entry_chars": 1536,
     # The share of the whole skill listing this plugin allows itself. Unlike the
-    # per-entry cap this is not the harness's number: the harness budgets the
-    # listing and drops entries when it overflows, but it never asks how much of
-    # that budget came from one plugin. Four terms derive it.
+    # per-entry cap this is not the harness's number, and there is no harness
+    # number to find: the harness budgets the listing and shortens it when it
+    # overflows -- dropping descriptions starting with the skills you invoke
+    # least, and never dropping a skill's name -- but it never asks how much of
+    # that budget came from one plugin. Losing a description is what costs us:
+    # the name survives, and a name alone routes on the folder name and nothing
+    # more. Four terms derive the ceiling.
     #
-    #   200,000 tokens    the smaller of the two current context tiers, chosen
-    #                     deliberately: a ceiling derived from the 1M tier would
-    #                     pass for the users with the most room and overflow for
+    #   200,000 tokens    the smaller of the two current context tiers, and a
+    #                     deliberately conservative floor rather than the tier
+    #                     the running model is on: Opus 5 and Sonnet 5 default
+    #                     to 1M. A ceiling derived from the 1M tier would pass
+    #                     for the users with the most room and overflow for
     #                     everyone else.
     #   x 1 percent       the documented fraction of the window the listing gets:
     #                     "the budget scales at 1% of the model's context window".
-    #   x 4 chars/token   English prose. The fraction is quoted against a token
+    #   x 4 chars/token   English prose, and this file's own approximation: no
+    #                     Anthropic documentation states a token-to-character
+    #                     conversion. The fraction is quoted against a token
     #                     window while the budget is spent in characters, so some
     #                     term has to bridge the two. This is the one to
-    #                     challenge first: it is the only term no documentation
-    #                     states, and the ceiling moves with it.
-    #   / 4               this plugin's share, and the openly judgemental term.
-    #                     The listing is shared with every other installed plugin
-    #                     and with the user's own skills; a plugin claiming more
-    #                     than a quarter of that is claiming most of it.
+    #                     challenge first: it is unsourced, and the ceiling moves
+    #                     with it.
+    #   / 3               this plugin's share, and the openly judgemental term.
+    #                     No per-plugin share is documented anywhere, so this is
+    #                     wholly our convention and not a figure to match. The
+    #                     listing is shared with every other installed plugin and
+    #                     with the user's own skills, and a plugin of this size
+    #                     -- ten listed skills as this is written -- claiming a
+    #                     third of it is defensible where a half plainly is not.
+    #
+    # 200,000 x 0.01 x 4 / 3 is 2,666.67, floored rather than rounded: a ceiling
+    # that rounds up claims characters its own derivation does not support.
     #
     # A deployment can raise the real budget -- `skillListingBudgetFraction`
     # resets the percentage, `SLASH_COMMAND_TOOL_CHAR_BUDGET` replaces it with a
     # flat character count -- so a given session may have far more room than
     # this. That is the reason to hold the line rather than to relax it: what we
     # spend here is spent in every session that did *not* raise the budget.
-    "listing_total_chars": 2000,
+    "listing_total_chars": 2666,
     # A description's routing job is done by the condition it opens with, and 40
     # words is room enough for that condition in every skill and agent here. The
     # ones that measured over it -- 96, 85, 79 -- were all spending the overage

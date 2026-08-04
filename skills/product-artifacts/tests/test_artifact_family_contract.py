@@ -65,6 +65,24 @@ SUPERSEDED_SPEC_SECTIONS = (
     "## Edge cases",
 )
 
+# roadmap.md's required H2 names, in the order the member reads them.
+ROADMAP_SECTIONS = (
+    "## Scored items",
+    "## Sequence",
+    "## Risks",
+)
+
+# roadmap.md's pre-existing placeholder names, both of them date-shaped terms the
+# scored roadmap drops. `## Risks` is absent from this tuple because the new set
+# retains it rather than replacing it. `## Sequencing` also has to be gone for
+# `## Scored items`, `## Sequence` to mean what it says: `## Sequence` matches
+# inside `## Sequencing`, so an unreplaced placeholder would satisfy the order
+# assertion on its own.
+SUPERSEDED_ROADMAP_SECTIONS = (
+    "## Milestones",
+    "## Sequencing",
+)
+
 UNKNOWN_MARKER_LITERAL = "[UNKNOWN: <what is missing> -- <who would know>]"
 
 UNKNOWN_MARKER_HEADING = "## Unknown marker"
@@ -110,6 +128,24 @@ def _assert_names_in_pinned_order(text: str, names: tuple[str, ...], what: str) 
         f"artifact-family.md must name every {what} in the pinned order "
         f"{names}; found at positions {positions}"
     )
+
+
+def _assert_superseded_names_absent(text: str, names: tuple[str, ...], what: str) -> None:
+    """Assert `text` names no entry of `names` anywhere in the document.
+
+    The companion to `_assert_names_in_pinned_order`, and the half that makes it
+    mean something: a replaced list and a list the new names were appended to
+    both satisfy a pinned order, so only the superseded names' absence
+    distinguishes them. Absence is judged over the whole document rather than
+    the member's own row, because a placeholder that survived anywhere is a
+    second answer to a question this file exists to answer once. `what` is the
+    singular label for one entry ("spec.md section"), matching the order helper.
+    """
+    for name in names:
+        assert name not in text, (
+            f"artifact-family.md still names the superseded {what} {name!r}; "
+            f"the pinned names replace that set rather than extend it"
+        )
 
 
 def test_artifact_family_pins_member_chain_and_provenance_literal() -> None:
@@ -182,15 +218,22 @@ def test_artifact_family_pins_spec_sections() -> None:
     # before naming the problem would argue backwards.
     _assert_names_in_pinned_order(text, SPEC_SECTIONS, "spec.md section")
 
-    # Appending the new names to the placeholder set would leave both readings
-    # defensible, so each superseded name must be gone from the whole document,
-    # not merely outranked inside spec.md's own row.
-    for section in SUPERSEDED_SPEC_SECTIONS:
-        assert section not in text, (
-            f"artifact-family.md still names the superseded spec.md section "
-            f"{section!r}; the self-contained sections replace that set rather "
-            f"than extend it"
-        )
+    # The self-contained sections replace the technology-shaped placeholder set
+    # rather than extend it, so each superseded name must be gone.
+    _assert_superseded_names_absent(text, SUPERSEDED_SPEC_SECTIONS, "spec.md section")
+
+
+def test_artifact_family_pins_roadmap_sections() -> None:
+    assert ARTIFACT_FAMILY.exists(), f"missing published contract: {ARTIFACT_FAMILY}"
+    text = ARTIFACT_FAMILY.read_text()
+
+    # The three sections are a sequence, not a set: a roadmap that ordered the
+    # work before scoring it would have sequenced items it had not yet ranked.
+    _assert_names_in_pinned_order(text, ROADMAP_SECTIONS, "roadmap.md section")
+
+    # The scored sections replace the date-shaped placeholder pair rather than
+    # extend it, so each superseded name must be gone.
+    _assert_superseded_names_absent(text, SUPERSEDED_ROADMAP_SECTIONS, "roadmap.md section")
 
 
 if __name__ == "__main__":
