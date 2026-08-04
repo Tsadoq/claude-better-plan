@@ -17,9 +17,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-ARTIFACT_FAMILY = (
-    Path(__file__).resolve().parent.parent / "references" / "artifact-family.md"
-)
+ARTIFACT_FAMILY = Path(__file__).resolve().parent.parent / "references" / "artifact-family.md"
 
 # The closed five-member chain, in chain order.
 MEMBERS_IN_CHAIN_ORDER = (
@@ -51,6 +49,22 @@ BRIEF_SECTIONS = (
 # distinguishes a replaced list from one the PR-FAQ names were appended to.
 SUPERSEDED_BRIEF_SECTION = "## Success criteria"
 
+# spec.md's required H2 names, in the order the member reads them.
+SPEC_SECTIONS = (
+    "## Problem and opportunity",
+    "## Requirements in scope",
+    "## Non-goals",
+)
+
+# spec.md's pre-existing placeholder section set. All three are technology-shaped
+# names the self-contained spec deliberately drops, and their absence is what
+# distinguishes a replaced list from one the new names were appended to.
+SUPERSEDED_SPEC_SECTIONS = (
+    "## Interfaces",
+    "## Behavior",
+    "## Edge cases",
+)
+
 UNKNOWN_MARKER_LITERAL = "[UNKNOWN: <what is missing> -- <who would know>]"
 
 UNKNOWN_MARKER_HEADING = "## Unknown marker"
@@ -79,27 +93,40 @@ def _section_body(text: str, heading: str) -> str:
     return after_heading if next_h2 == -1 else after_heading[:next_h2]
 
 
+def _assert_names_in_pinned_order(text: str, names: tuple[str, ...], what: str) -> None:
+    """Assert `text` names every entry of `names`, in the order `names` gives.
+
+    Order is judged on first occurrences, which is what order means for a list
+    whose entries each appear once: a name that has moved ahead of its
+    predecessor has changed the sequence a reader consults, even though the set
+    of names is untouched. `what` is the singular label for one entry ("chain
+    member", "spec.md section"), so a failure says which published list drifted
+    rather than only that some order was wrong.
+    """
+    positions = [text.find(name) for name in names]
+    for name, pos in zip(names, positions, strict=True):
+        assert pos != -1, f"artifact-family.md is missing {what} {name!r}"
+    assert positions == sorted(positions), (
+        f"artifact-family.md must name every {what} in the pinned order "
+        f"{names}; found at positions {positions}"
+    )
+
+
 def test_artifact_family_pins_member_chain_and_provenance_literal() -> None:
     assert ARTIFACT_FAMILY.exists(), f"missing published contract: {ARTIFACT_FAMILY}"
     text = ARTIFACT_FAMILY.read_text()
 
-    # Chain order: each member's first occurrence must come after the previous
-    # member's first occurrence, so the prose cannot silently reorder the chain.
-    positions = [text.find(member) for member in MEMBERS_IN_CHAIN_ORDER]
-    for member, pos in zip(MEMBERS_IN_CHAIN_ORDER, positions, strict=True):
-        assert pos != -1, f"artifact-family.md is missing chain member {member!r}"
-    assert positions == sorted(positions), (
-        f"artifact-family.md must name the five members in chain order "
-        f"{MEMBERS_IN_CHAIN_ORDER}; found at positions {positions}"
-    )
+    # The chain is an order, not a set: prose naming roadmap.md ahead of
+    # brief.md would describe a chain that derives members from their own
+    # descendants.
+    _assert_names_in_pinned_order(text, MEMBERS_IN_CHAIN_ORDER, "chain member")
 
     # The literal five downstream skills cite must appear exactly once: zero
     # means it was never published, and more than once invites two copies to
     # drift apart from each other.
     occurrences = text.count(PROVENANCE_LITERAL)
     assert occurrences == 1, (
-        f"expected the provenance literal {PROVENANCE_LITERAL!r} to appear exactly "
-        f"once, found {occurrences}"
+        f"expected the provenance literal {PROVENANCE_LITERAL!r} to appear exactly once, found {occurrences}"
     )
 
     for heading in REQUIRED_HEADINGS:
@@ -110,16 +137,9 @@ def test_artifact_family_pins_brief_sections_and_unknown_marker() -> None:
     assert ARTIFACT_FAMILY.exists(), f"missing published contract: {ARTIFACT_FAMILY}"
     text = ARTIFACT_FAMILY.read_text()
 
-    # Document order: the PR-FAQ's three sections are a sequence, not a set --
-    # an internal FAQ published ahead of the press release would describe a
-    # different format -- so first occurrences must ascend.
-    positions = [text.find(section) for section in BRIEF_SECTIONS]
-    for section, pos in zip(BRIEF_SECTIONS, positions, strict=True):
-        assert pos != -1, f"artifact-family.md is missing brief.md section {section!r}"
-    assert positions == sorted(positions), (
-        f"artifact-family.md must name brief.md's sections in document order "
-        f"{BRIEF_SECTIONS}; found at positions {positions}"
-    )
+    # The PR-FAQ's three sections are a sequence, not a set: an internal FAQ
+    # published ahead of the press release would describe a different format.
+    _assert_names_in_pinned_order(text, BRIEF_SECTIONS, "brief.md section")
 
     # Appending the PR-FAQ names to the old placeholder set would leave both
     # readings defensible, so the superseded name must be gone, not merely
@@ -144,14 +164,32 @@ def test_artifact_family_pins_brief_sections_and_unknown_marker() -> None:
     marker_section = _section_body(text, UNKNOWN_MARKER_HEADING)
     for bullet in UNKNOWN_MARKER_FIELD_BULLETS:
         assert bullet in marker_section, (
-            f"{UNKNOWN_MARKER_HEADING!r} does not document the payload field "
-            f"{bullet!r} on its own bullet"
+            f"{UNKNOWN_MARKER_HEADING!r} does not document the payload field {bullet!r} on its own bullet"
         )
     for term in UNKNOWN_MARKER_RULE_TERMS:
         assert term in marker_section, (
             f"{UNKNOWN_MARKER_HEADING!r} must state that both payload fields are "
             f"mandatory and that a marker with an empty field is malformed; the "
             f"word {term!r} is missing from the section"
+        )
+
+
+def test_artifact_family_pins_spec_sections() -> None:
+    assert ARTIFACT_FAMILY.exists(), f"missing published contract: {ARTIFACT_FAMILY}"
+    text = ARTIFACT_FAMILY.read_text()
+
+    # The three sections are a sequence, not a set: a spec that ruled scope out
+    # before naming the problem would argue backwards.
+    _assert_names_in_pinned_order(text, SPEC_SECTIONS, "spec.md section")
+
+    # Appending the new names to the placeholder set would leave both readings
+    # defensible, so each superseded name must be gone from the whole document,
+    # not merely outranked inside spec.md's own row.
+    for section in SUPERSEDED_SPEC_SECTIONS:
+        assert section not in text, (
+            f"artifact-family.md still names the superseded spec.md section "
+            f"{section!r}; the self-contained sections replace that set rather "
+            f"than extend it"
         )
 
 
