@@ -35,7 +35,7 @@ under each heading is that beat's concern, not this substrate's.
 - `brief.md`: `## Press release`, `## External FAQ`, `## Internal FAQ`
 - `discovery.md`: `## Signals`, `## Constraints`, `## Open questions`
 - `requirements.md`: `## Scope`, `## Requirements`, `## Out of scope`
-- `spec.md`: `## Interfaces`, `## Behavior`, `## Edge cases`
+- `spec.md`: `## Problem and opportunity`, `## Requirements in scope`, `## Non-goals`
 - `roadmap.md`: `## Milestones`, `## Sequencing`, `## Risks`
 
 ## Provenance
