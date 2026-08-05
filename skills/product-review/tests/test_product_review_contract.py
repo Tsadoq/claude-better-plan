@@ -2,11 +2,12 @@
 
 `product-review` is the one critic-fleet caller in this plugin whose cluster
 source is not fixed. Every other caller names one principles file forever; this
-one derives a path per target, from the `Owning skill` column of
-skills/product-artifacts/references/artifact-family.md and a single path
+one derives a path per target, from the `Owning skill` columns of
+skills/product-artifacts/references/artifact-family.md -- the chain's member
+table and the non-member artifacts published beside it -- and a single path
 template published in its own SKILL.md. That derivation is what is worth
-pinning: a member judged against another member's rubric reads as a clean
-review, and nothing else in this repository would notice.
+pinning: a target judged against another beat's rubric reads as a clean review,
+and nothing else in this repository would notice.
 
 So the first two tests read the template out of the shipped SKILL.md rather than
 keeping a copy of it, run it over the beats the substrate names, and check the
@@ -24,13 +25,15 @@ sequences, and this module would then report a declaration the harness never
 read. Only the body split is local, because guarantees.py exposes the keys
 inside the block and not the remainder.
 
-Scoped deliberately narrow. That the `Owning skill` column is a complete
-bijection, and that each beat it names is well formed and invocable, is pinned
-by skills/product-status/tests/test_product_status_contract.py; this module
-consumes that column and asserts only what the template does with it. Nothing
-here measures description or listing-entry length either:
-tests/test_description_budget.py owns every such comparison and fails the build
-on a second one.
+Scoped deliberately narrow. That the member table's `Owning skill` column is a
+complete bijection, and that each beat it names is well formed and invocable, is
+pinned by skills/product-status/tests/test_product_status_contract.py; this
+module consumes that column and asserts only what the template does with it. The
+non-member table has no such second reader, so what this module needs from it is
+asserted here and nothing more: that it names a beat at all, and that the beat's
+rubric is one the template reaches. Nothing here measures description or
+listing-entry length either: tests/test_description_budget.py owns every such
+comparison and fails the build on a second one.
 
 Runnable two ways:
     python3 skills/product-review/tests/test_product_review_contract.py
@@ -49,15 +52,26 @@ REPO = Path(__file__).resolve().parents[3]
 SKILL = REPO / "skills" / "product-review" / "SKILL.md"
 ARTIFACT_FAMILY = REPO / "skills" / "product-artifacts" / "references" / "artifact-family.md"
 
-# The sections this module reads out of documents it does not own.
+# The sections this module reads out of documents it does not own. The two
+# tables are what the family publishes about ownership: `## Members` is the
+# closed chain, `## Non-member artifacts` is everything else a beat writes into
+# the same folder. Reviewability follows from being in the family, not from
+# being in the chain, so this module reads both and neither alone.
 MEMBERS_HEADING = "## Members"
+NON_MEMBERS_HEADING = "## Non-member artifacts"
 PROVENANCE_HEADING = "## Provenance"
 
-# The two columns of `## Members` this module reads. Cells are looked up by
-# header rather than by position: the column *order* is
+# The columns this module reads. Cells are looked up by header rather than by
+# position: the column *order* of `## Members` is
 # test_product_status_contract.py's contract with that table, and a second copy
-# of it here would be a second thing to keep in step.
+# of it here would be a second thing to keep in step. `Owning skill` is the one
+# column both tables carry, and the only one the rubric path is composed from;
+# the other two only name what the row is about, so a table missing its own is a
+# table this module cannot report a row of. They are spelled differently because
+# they hold different things: a member is one file the chain names, a non-member
+# artifact is the folder its beat writes.
 MEMBER_COLUMN = "Member"
+FOLDER_COLUMN = "Folder"
 OWNING_SKILL_COLUMN = "Owning skill"
 
 # The rubric-path template as SKILL.md publishes it, in placeholder form. One
@@ -132,12 +146,19 @@ RUNTIME_ANCHORS = {
         "published member set. It has to stay a glob: the frontmatter denies `Bash`, so the "
         "substrate script this replaced could not be run even if the body asked for it"
     ),
+    "`Folder` column": (
+        "the other half of that rule, which is what reaches a beat owning no chain member: "
+        "the family publishes two ownership tables, and a body that enumerated only the "
+        "first would compose that beat's rubric path perfectly and never once select it. "
+        "The rubric-coverage test above cannot see this -- it asks what the template "
+        "*could* reach, and reachability nothing enumerates is reachability on paper"
+    ),
     "unreviewable": (
-        "the missing-rubric rule, which reports the member and the path it expected rather "
-        "than judging it against another member's rubric or passing over it in silence"
+        "the missing-rubric rule, which reports the target and the path it expected rather "
+        "than judging it against another beat's rubric or passing over it in silence"
     ),
     "never merged": (
-        "the one-block-per-member rule, which keeps a finding attached to the rubric it was "
+        "the one-block-per-target rule, which keeps a finding attached to the rubric it was "
         "judged against"
     ),
     "re-read": (
@@ -199,33 +220,40 @@ def _cells(row: str) -> list[str]:
     return [cell.strip().strip("`").strip() for cell in row.strip().strip("|").split("|")]
 
 
-def _members_table() -> list[dict[str, str]]:
-    """`## Members` as one `{column: cell}` mapping per row, in table order.
+def _family_table(heading: str, subject_column: str) -> list[dict[str, str]]:
+    """One published ownership table as `{column: cell}` per row, in table order.
+
+    Shared by both tables the family publishes, because what this module wants
+    from each is the same: rows carrying a subject and the beat that owns it.
+    `subject_column` is the header naming what a row is about -- `Member` for
+    the chain, `Folder` for what a beat writes beside it -- and is required
+    alongside the owning-skill column so that a table which had lost its subject
+    is reported here rather than read as a list of ownerless beats.
 
     Raises rather than returning an empty list when the section, the table, or
-    either column this module reads is missing. Everything below is a statement
-    about rows, and a document that had stopped publishing the contract would
-    satisfy several of them by having none.
+    either column is missing. Everything below is a statement about rows, and a
+    document that had stopped publishing the contract would satisfy several of
+    them by having none.
     """
-    section = _section(ARTIFACT_FAMILY.read_text(encoding="utf-8"), MEMBERS_HEADING)
+    section = _section(ARTIFACT_FAMILY.read_text(encoding="utf-8"), heading)
     if section is None:
-        raise AssertionError(f"{ARTIFACT_FAMILY} publishes no `{MEMBERS_HEADING}` section")
+        raise AssertionError(f"{ARTIFACT_FAMILY} publishes no `{heading}` section")
 
     # A markdown table is a run of pipe lines: header, separator, then rows.
     pipe_lines = [line for line in section.splitlines() if line.lstrip().startswith("|")]
     if len(pipe_lines) < 3:
         raise AssertionError(
-            f"`{MEMBERS_HEADING}` in {ARTIFACT_FAMILY} carries {len(pipe_lines)} pipe lines; "
-            f"expected a header, a separator and at least one member row"
+            f"`{heading}` in {ARTIFACT_FAMILY} carries {len(pipe_lines)} pipe lines; "
+            f"expected a header, a separator and at least one row"
         )
 
     columns = _cells(pipe_lines[0])
-    for needed in (MEMBER_COLUMN, OWNING_SKILL_COLUMN):
+    for needed in (subject_column, OWNING_SKILL_COLUMN):
         if needed not in columns:
             raise AssertionError(
-                f"`{MEMBERS_HEADING}` in {ARTIFACT_FAMILY} has columns {columns}, which do not "
-                f"include {needed!r}; that column is where product-review reads the mapping it "
-                f"composes its rubric path from, so its absence is the mapping being gone"
+                f"`{heading}` in {ARTIFACT_FAMILY} has columns {columns}, which do not "
+                f"include {needed!r}; those columns are where product-review reads the mapping "
+                f"it composes its rubric path from, so an absence is the mapping being gone"
             )
 
     rows: list[dict[str, str]] = []
@@ -233,10 +261,29 @@ def _members_table() -> list[dict[str, str]]:
         cells = _cells(line)
         if len(cells) != len(columns):
             raise AssertionError(
-                f"`{MEMBERS_HEADING}` row {line!r} has {len(cells)} cells, expected {len(columns)}"
+                f"`{heading}` row {line!r} has {len(cells)} cells, expected {len(columns)}"
             )
         rows.append(dict(zip(columns, cells, strict=True)))
     return rows
+
+
+def _member_beats() -> list[str]:
+    """The beat owning each chain member, in chain order."""
+    return [row[OWNING_SKILL_COLUMN] for row in _family_table(MEMBERS_HEADING, MEMBER_COLUMN)]
+
+
+def _non_member_beats() -> list[str]:
+    """The beat owning each family artifact that is not a chain member.
+
+    A separate reader rather than a flag on the one above, because the two
+    tables mean different things and only one of them is the chain: freshness,
+    provenance and chain order are statements about members, and a caller that
+    conflated the tables would start making them about a folder nothing derives
+    from.
+    """
+    return [
+        row[OWNING_SKILL_COLUMN] for row in _family_table(NON_MEMBERS_HEADING, FOLDER_COLUMN)
+    ]
 
 
 def _skill_text() -> str:
@@ -327,8 +374,8 @@ def _lift_rubric_templates() -> list[re.Match[str]]:
     return list(found.values())
 
 
-def _reachable_rubrics() -> set[str]:
-    """Every rubric path the published template reaches, one per owning beat.
+def _rubric_paths(beats: list[str]) -> set[str]:
+    """The rubric path the published template composes for each of `beats`.
 
     Raises unless the body publishes exactly one template. With two, "reachable"
     has no single answer; with none the set is empty and every statement about
@@ -345,8 +392,19 @@ def _reachable_rubrics() -> set[str]:
 
     template = templates[0]
     slot = f"<{template.group('slot')}>"
-    beats = [row[OWNING_SKILL_COLUMN] for row in _members_table()]
     return {template.group(0).replace(slot, beat) for beat in beats}
+
+
+def _reachable_rubrics() -> set[str]:
+    """Every rubric path product-review can select, over the whole family.
+
+    Both published columns, because a beat is selectable for owning something in
+    the folder family and not for owning a link in the chain. Reading the member
+    table alone is the drift this exists to prevent: it leaves a shipped rubric
+    that no invocation can ever reach, which costs a beat its review while every
+    other check in this module stays green.
+    """
+    return _rubric_paths(_member_beats() + _non_member_beats())
 
 
 def _red_flag_clusters(path: Path) -> list[str]:
@@ -393,26 +451,48 @@ def test_rubric_template_derives_every_shipped_principles_file() -> None:
 
     unreachable = on_disk - produced
     assert not unreachable, (
-        f"{sorted(unreachable)} exists on disk but no member's owning beat produces it, so "
-        f"product-review can never select it -- the template in SKILL.md and the Owning skill "
-        f"column of artifact-family.md have drifted"
+        f"{sorted(unreachable)} exists on disk but no beat published in {ARTIFACT_FAMILY.name} "
+        f"produces it, so product-review can never select it -- the template in SKILL.md and the "
+        f"`{OWNING_SKILL_COLUMN}` columns of artifact-family.md have drifted"
+    )
+
+    # The two assertions below pin the off-chain half of that derivation, which
+    # the one above cannot: delete the non-member column and the rubric it
+    # reaches in one commit and `unreachable` is empty again, leaving a beat
+    # whose red-flag clusters nothing can run. So the capability is asserted
+    # directly rather than through the drift it prevents.
+    off_chain_beats = _non_member_beats()
+    assert off_chain_beats, (
+        f"`{NON_MEMBERS_HEADING}` in {ARTIFACT_FAMILY.name} names no owning beat, so every "
+        f"rubric this template reaches belongs to a chain member. A beat that writes a family "
+        f"artifact outside the closed chain -- a folder beside the members rather than a sixth "
+        f"member -- ships a rubric like any other, and that column is the only thing that puts "
+        f"one within reach of the single template product-review publishes"
+    )
+
+    off_chain = _rubric_paths(off_chain_beats) - _rubric_paths(_member_beats())
+    assert off_chain & on_disk, (
+        f"`{NON_MEMBERS_HEADING}` reaches {sorted(off_chain)}, none of which ships: no rubric on "
+        f"disk is selectable through a beat that owns no chain member. One such rubric ships "
+        f"today, so this is that beat's row leaving the table, its rubric leaving the tree, or "
+        f"the beat being renamed in one of the two places and not the other"
     )
 
     for path in sorted(produced):
         assert RUBRIC_TREE.fullmatch(path), (
             f"template produced {path!r}, which escapes skills/product-*/references/; a rubric "
-            f"path outside that tree means the template or the Owning skill column now names "
-            f"something that is not a product beat"
+            f"path outside that tree means the template or an `{OWNING_SKILL_COLUMN}` cell now "
+            f"names something that is not a product beat"
         )
 
 
 def test_every_reachable_rubric_exposes_the_cluster_shape() -> None:
-    # Only the rubrics that exist. Four of the five beats have not shipped, and
-    # an absent rubric is the skill's unreviewable report rather than a broken
-    # rubric. What is asserted is that a rubric the skill *will* select can
-    # actually drive a fleet: the fan-out is one finder per H3 cluster under the
-    # red-flags heading, so a rubric carrying none launches nothing and hands
-    # back a member that reads as reviewed and clean.
+    # Only the rubrics that exist. A beat that ships none is the skill's
+    # unreviewable report rather than a broken rubric, and which beats those are
+    # changes as the suite fills in. What is asserted is that a rubric the skill
+    # *will* select can actually drive a fleet: the fan-out is one finder per H3
+    # cluster under the red-flags heading, so a rubric carrying none launches
+    # nothing and hands back a target that reads as reviewed and clean.
     reachable = _reachable_rubrics()
     present = sorted(path for path in reachable if (REPO / path).is_file())
 
@@ -451,7 +531,7 @@ def test_skill_cites_rather_than_restating() -> None:
     # body naming no member satisfies "at most four" trivially. Member names
     # come from the published table rather than a list here, so this is a
     # statement about the real chain.
-    members = [row[MEMBER_COLUMN] for row in _members_table()]
+    members = [row[MEMBER_COLUMN] for row in _family_table(MEMBERS_HEADING, MEMBER_COLUMN)]
     named = [member for member in members if member in body]
 
     assert len(named) < len(members), (

@@ -1,0 +1,49 @@
+Create an issue on GitHub.
+
+Adding an issue to projects requires authorization with the `project` scope.
+To authorize, run `gh auth refresh -s project`.
+
+The `--assignee` flag supports the following special values:
+- `@me`: assign yourself
+- `@copilot`: assign Copilot (not supported on GitHub Enterprise Server)
+
+
+USAGE
+  gh issue create [flags]
+
+ALIASES
+  gh issue new
+
+FLAGS
+  -a, --assignee login   Assign people by their login. Use "@me" to self-assign.
+  -b, --body string      Supply a body. Will prompt for one otherwise.
+  -F, --body-file file   Read body text from file (use "-" to read from standard input)
+  -e, --editor           Skip prompts and open the text editor to write the title and body in. The first line is the title and the remaining text is the body.
+  -l, --label name       Add labels by name
+  -m, --milestone name   Add the issue to a milestone by name
+  -p, --project title    Add the issue to projects by title
+      --recover string   Recover input from a failed run of create
+  -T, --template name    Template name to use as starting body text
+  -t, --title string     Supply a title. Will prompt for one otherwise.
+  -w, --web              Open the browser to create an issue
+
+INHERITED FLAGS
+      --help                     Show help for command
+  -R, --repo [HOST/]OWNER/REPO   Select another repository using the [HOST/]OWNER/REPO format
+
+EXAMPLES
+  $ gh issue create --title "I found a bug" --body "Nothing works"
+  $ gh issue create --label "bug,help wanted"
+  $ gh issue create --label bug --label "help wanted"
+  $ gh issue create --assignee monalisa,hubot
+  $ gh issue create --assignee "@me"
+  $ gh issue create --assignee "@copilot"
+  $ gh issue create --project "Roadmap"
+  $ gh issue create --template "Bug Report"
+
+LEARN MORE
+  Use `gh <command> <subcommand> --help` for more information about a command.
+  Read the manual at https://cli.github.com/manual
+  Learn about exit codes using `gh help exit-codes`
+  Learn about accessibility experiences using `gh help accessibility`
+
