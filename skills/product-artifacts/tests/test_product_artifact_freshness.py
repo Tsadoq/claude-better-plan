@@ -1,9 +1,3 @@
-"""Component test for product_artifact.py's --check-freshness entry point.
-
-Runnable two ways:
-    python3 skills/product-artifacts/tests/test_product_artifact_freshness.py
-    python3 -m pytest skills/product-artifacts/tests/test_product_artifact_freshness.py
-"""
 
 from __future__ import annotations
 
@@ -47,10 +41,6 @@ def _run_main(argv: list[str]) -> tuple[dict[str, Any], int]:
 
 
 def _provenance_format_literal() -> str:
-    """The provenance line format, parsed out of `## Provenance`'s fenced
-    code block, so this test's expectation cannot drift from the published
-    contract independently of `artifact-family.md`'s prose (owned as prose by
-    the contract test, not re-asserted here)."""
     text = ARTIFACT_FAMILY.read_text()
     section = text.split("## Provenance", 1)[1].split("\n## ", 1)[0]
     match = re.search(r"```\n(.+?)\n```", section, re.DOTALL)
@@ -61,8 +51,6 @@ def _provenance_format_literal() -> str:
 def _write_with_provenance(
     folder: Path, member: str, body: str, upstream: str, upstream_bytes: bytes
 ) -> None:
-    """Write `member` with a provenance line computed by the script's own
-    `blob_sha`, so the fixture cannot encode a stale expectation."""
     sha = product_artifact.blob_sha(upstream_bytes)
     (folder / member).write_text(f"{body}\n\n**Derived from**: {upstream} ({sha})\n")
 
@@ -85,17 +73,11 @@ def test_freshness_separates_stale_from_unresolvable_and_exits_zero() -> None:
         original_first_bytes = b"brief v1 content"
         (folder / first).write_bytes(original_first_bytes)
 
-        # Correct provenance line for the first member's original content.
         _write_with_provenance(folder, second, "discovery content", first, original_first_bytes)
 
-        # Malformed provenance line: the sha is truncated, so PROVENANCE_RE
-        # must not match it.
         (folder / third).write_text(f"requirements content\n\n**Derived from**: {second} (deadbeef)\n")
 
-        # fourth and fifth are left unwritten (absent).
 
-        # Rewrite the first member so the second member's recorded sha no
-        # longer matches its upstream's current content.
         (folder / first).write_bytes(b"brief v2 content, rewritten after the fact")
 
         result, code = _run_main(["--check-freshness", "--slug", slug, "--product-dir", str(product_dir)])
@@ -111,8 +93,6 @@ def test_freshness_separates_stale_from_unresolvable_and_exits_zero() -> None:
         assert members_state[fourth] == "absent"
         assert members_state[fifth] == "absent"
 
-        # A named slug whose folder does not exist yields all five members
-        # absent and still exits 0.
         result, code = _run_main(
             ["--check-freshness", "--slug", "no-such-slug", "--product-dir", str(product_dir)]
         )

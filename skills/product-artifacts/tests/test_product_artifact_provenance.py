@@ -1,15 +1,3 @@
-"""Component test for product_artifact.py's --provenance-line entry point.
-
-Pins the one behaviour the flag adds: a beat asks for the provenance line it
-should write into a member, and gets either a line the published
-`PROVENANCE_RE` accepts or `None` when there is no upstream to record --
-never an error. `blob_sha` correctness and the four staleness states are
-owned by test_product_artifact_freshness.py and are not re-asserted here.
-
-Runnable two ways:
-    python3 skills/product-artifacts/tests/test_product_artifact_provenance.py
-    python3 -m pytest skills/product-artifacts/tests/test_product_artifact_provenance.py
-"""
 
 from __future__ import annotations
 
@@ -54,8 +42,6 @@ def test_provenance_line_is_emitted_when_an_upstream_resolves_and_null_when_it_d
     with tempfile.TemporaryDirectory() as d:
         product_dir = Path(d)
 
-        # A slug whose first member exists: the second member's upstream
-        # resolves, so a line must come back.
         resolvable = "widget-export"
         folder = product_dir / resolvable
         folder.mkdir()
@@ -86,7 +72,6 @@ def test_provenance_line_is_emitted_when_an_upstream_resolves_and_null_when_it_d
             f"({expected_sha}); the line carried {match.group(2)} (line: {line!r})"
         )
 
-        # The chain head has no upstream to record: null line, still exit 0.
         result, code = _run_main(
             ["--provenance-line", "--slug", resolvable, "--member", first, "--product-dir", str(product_dir)]
         )
@@ -96,7 +81,6 @@ def test_provenance_line_is_emitted_when_an_upstream_resolves_and_null_when_it_d
             f"it; got {result['line']!r}"
         )
 
-        # Upstream file absent: null line, still exit 0.
         headless = "no-brief-yet"
         (product_dir / headless).mkdir()
 
@@ -111,10 +95,6 @@ def test_provenance_line_is_emitted_when_an_upstream_resolves_and_null_when_it_d
             f"is no sha to record; got {result['line']!r}"
         )
 
-        # Invalid slug, with a decoy first member sitting directly in
-        # product_dir: an unguarded `product_dir / normalise_slug("!!!")`
-        # collapses to product_dir itself, which would hash the decoy and
-        # emit it as a real member's provenance.
         (product_dir / first).write_bytes(b"decoy that belongs to no slug folder")
 
         result, code = _run_main(

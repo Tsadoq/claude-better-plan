@@ -1,13 +1,3 @@
-"""Contract test: root-owned pytest discovery and the reproducible CI runner.
-
-Pins pyproject.toml's [tool.pytest.ini_options] and ci.yml's runner shape so
-test discovery is owned in exactly one place and no caller ever lists
-per-skill test paths again. Stdlib only, so CI does not need pyyaml.
-
-Runnable two ways:
-    python3 skills/deep-plan/tests/test_harness_contract.py
-    python3 -m pytest skills/deep-plan/tests/test_harness_contract.py
-"""
 
 from __future__ import annotations
 
@@ -21,13 +11,6 @@ CI_YML = ROOT / ".github" / "workflows" / "ci.yml"
 
 
 def _discoverable_test_dirs() -> list[str]:
-    """The repo layout is the source of truth for what discovery must cover.
-
-    Two shapes qualify: a skill's co-located `tests/` dir, and the repo-level
-    `tests/` dir that holds the cross-skill checks no single skill owns. Both
-    are found by walking the tree, so adding either kind of dir cannot be
-    forgotten in pyproject.toml.
-    """
     candidates = [*(ROOT / "skills").glob("*/tests"), ROOT / "tests"]
     return sorted(str(p.relative_to(ROOT)) for p in candidates if p.is_dir())
 

@@ -1,9 +1,3 @@
-"""Tests for setup_session.py state shape after the write-guard removal.
-
-Runnable two ways:
-    python3 skills/deep-plan/tests/test_setup_session.py
-    python3 -m pytest skills/deep-plan/tests/test_setup_session.py
-"""
 
 from __future__ import annotations
 
@@ -19,8 +13,6 @@ from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 
-# Point runtime state at a throwaway dir BEFORE importing the module (it reads
-# XDG_STATE_HOME at import time).
 _TMP = tempfile.mkdtemp(prefix="deep-plan-test-state-")
 os.environ["XDG_STATE_HOME"] = _TMP
 
@@ -148,9 +140,6 @@ def test_last_plan_path_roundtrip_gated_on_approval() -> None:
 
 
 def test_lookup_cli_runs_without_session_id() -> None:
-    # The CLI layer is the unit under test here: --lookup must work bare,
-    # while the other modes still demand --session-id. The child inherits
-    # this module's XDG_STATE_HOME redirect via os.environ.
     script = SCRIPTS / "setup_session.py"
     looked_up = subprocess.run(
         [sys.executable, str(script), "--lookup"], capture_output=True, text=True
@@ -188,7 +177,6 @@ def test_v03_state_and_projects_forward_compat() -> None:
     projects_file = Path(_TMP) / "deep-plan" / "projects.json"
     saved = projects_file.read_text() if projects_file.exists() else None
     try:
-        # v0.3-shaped projects.json record plus a stray legacy key.
         remembered = root / "docs" / "plans"
         setup.save_projects(
             {
@@ -202,7 +190,6 @@ def test_v03_state_and_projects_forward_compat() -> None:
         result = setup.cmd_bootstrap(types.SimpleNamespace(session_id=sid))
         assert result["plans_dir"] == str(remembered)
 
-        # Legacy v0.3 state shape on disk must not break cmd_update.
         setup.write_state(
             sid,
             {
@@ -235,14 +222,6 @@ def test_v03_state_and_projects_forward_compat() -> None:
 
 
 def test_bootstrap_ignores_legacy_state_dir() -> None:
-    """A stale pre-v0.5 ~/.claude/deep-plan/ must not feed back into bootstrap.
-
-    Runs the script as production does — a fresh subprocess — because both roots
-    are resolved at import time. The two env redirects do different jobs: HOME
-    places the fake legacy dir, so the test never reads the developer's real
-    ~/.claude/; XDG_STATE_HOME places the state this bootstrap writes, keeping it
-    out of the module-level state root the in-process tests share.
-    """
     marker = "/marker/legacy-plans-dir-must-not-be-read"
     script = SCRIPTS / "setup_session.py"
     sid = "pytest-legacy-ignored"
@@ -258,9 +237,6 @@ def test_bootstrap_ignores_legacy_state_dir() -> None:
 
         env = {**os.environ, "HOME": str(home), "XDG_STATE_HOME": str(home / "xdg-state")}
         try:
-            # cwd is not a git repo, so project_root resolves to `home` itself —
-            # the very key the legacy record above is written under. A migration
-            # would therefore surface `marker` as plans_dir.
             proc = subprocess.run(
                 [sys.executable, str(script), "--session-id", sid],
                 cwd=home,

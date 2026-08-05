@@ -1,9 +1,3 @@
-"""Tests for lib/artifact_common.py's marker literal contract.
-
-Runnable two ways:
-    python3 -m pytest tests/test_artifact_common.py
-    uvx pytest tests/test_artifact_common.py -q
-"""
 
 from __future__ import annotations
 
@@ -26,12 +20,6 @@ def _load(name: str, directory: Path):
     return mod
 
 
-# Imported (not compared against) so this test exercises both modules the
-# behaviour spans today, per the task's Real vs mocked note. Comparing this
-# module's INDEX_BEGIN/INDEX_END against artifact_common.markers("deep-plan")
-# is deliberately withheld: Task 2 makes those constants derive from
-# markers("deep-plan"), which would turn the comparison into asserting a
-# value against itself.
 finalize_plan = _load("finalize_plan", SCRIPTS)
 
 
@@ -42,8 +30,6 @@ def test_markers_reproduce_the_shipped_plans_literals():
 
 
 def test_markers_derives_from_the_name_argument():
-    """Guards against a `markers()` that ignores `name` and returns a
-    constant pair: a second family name must produce a different pair."""
     m = artifact_common.markers("product-artifacts")
     assert m.begin == "<!-- product-artifacts-index:begin generated: do not edit -->"
     assert m.end == "<!-- product-artifacts-index:end -->"

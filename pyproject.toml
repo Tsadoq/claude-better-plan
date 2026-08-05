@@ -1,24 +1,12 @@
-# Tooling config for the deep-plan plugin's helper scripts.
-#
-# The plugin ships no runtime Python dependencies (every script is stdlib-only);
-# this file exists purely to pin the lint/type/test quality gates that CI runs.
-# ruff and mypy are dev tools installed by CI, not plugin dependencies.
 
 [tool.ruff]
 line-length = 110
 target-version = "py312"
 
 [tool.ruff.lint]
-# Meaningful-but-green gate: pycodestyle errors, pyflakes, import sorting,
-# bugbear, and pyupgrade. Stylistic-only rule families are left off so the
-# gate flags real problems rather than churn.
 select = ["E", "F", "I", "B", "UP"]
 
 [tool.pytest.ini_options]
-# Discovery is owned here: callers (CI, `uvx pytest`) run bare pytest and
-# never list per-skill test paths. One entry per skill that ships a
-# co-located tests/ dir, plus the repo-level `tests/`, which holds the
-# cross-skill guarantee inventory that no single skill owns.
 testpaths = [
     "tests",
     "skills/deep-plan/tests",
@@ -34,16 +22,9 @@ testpaths = [
     "skills/product-review/tests",
     "skills/product-issues/tests",
 ]
-# importlib mode isolates the sibling test dirs from each other, so same-named
-# test modules or conftests across skills cannot collide on import.
 addopts = "--import-mode=importlib"
 
 [tool.mypy]
-# Strict typing is enforced only on the helper scripts and hooks (stdlib-only,
-# fully annotated), plus the plugin-root shared library. The test suite uses
-# dynamic importlib loading that strict mypy cannot model, so it is
-# intentionally out of scope here; CI invokes bare `mypy --strict`, so this
-# `files` list is what owns type-check discovery.
 python_version = "3.12"
 strict = true
 mypy_path = "$MYPY_CONFIG_FILE_DIR/lib"

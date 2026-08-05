@@ -1,30 +1,3 @@
-"""Contract tests for `product-status`: what it reads, and what it declares.
-
-`product-status` reports which beat a caller should run next, so it needs to
-know which beat owns each chain member. That derivation is published in one
-place -- the `Owning skill` column of `## Members` in
-skills/product-artifacts/references/artifact-family.md -- and this module pins
-it by parsing that table rather than keeping a second copy of it here, which is
-the drift a citing skill exists to avoid.
-
-The second half of the module reads the shipped `SKILL.md` itself: the tool
-declaration that makes the skill read-only, the single script path its grant
-and its body must keep in step, the runtime rules it publishes as prose, and
-that it cites the member contract instead of growing a second copy of it.
-
-Scoped deliberately narrow: member chain order, the provenance literal and the
-required H2 headings are already pinned by
-skills/product-artifacts/tests/test_artifact_family_contract.py and are not
-re-asserted here; the provenance prefix appears below only as a string the
-skill's body must not contain, and is read out of the published contract rather
-than copied, so no copy of the format lands here either. Nothing here measures
-description or listing-entry length: tests/test_description_budget.py owns every
-such comparison and fails the build on a second one.
-
-Runnable two ways:
-    python3 skills/product-status/tests/test_product_status_contract.py
-    python3 -m pytest skills/product-status/tests/test_product_status_contract.py
-"""
 
 from __future__ import annotations
 
@@ -38,49 +11,20 @@ ARTIFACT_FAMILY = SKILLS / "product-artifacts" / "references" / "artifact-family
 ARTIFACT_SCRIPTS = SKILLS / "product-artifacts" / "scripts"
 SKILL = SKILLS / "product-status" / "SKILL.md"
 
-# The table's columns, in published order. `_members_table` reads cells
-# positionally, so this is the parser's contract with the document.
 MEMBERS_TABLE_COLUMNS = ("Member", "Upstream", "Position", "Owning skill")
 
-# The chain is closed at five members (artifact-family.md's `## Members`).
 CHAIN_LENGTH = 5
 
-# The placeholder the column carried before any beat claimed a member.
 UNFILLED = "tbd"
 
-# The tools the skill must deny by bare name. `disallowed-tools` is the field
-# that actually narrows -- `allowed-tools` only auto-approves what a caller
-# would otherwise be prompted for -- so the read-only promise is kept here and
-# nowhere else in the frontmatter.
 DENIED_TOOLS = ("Write", "Edit", "Agent", "Skill")
 
-# A `Bash` entry with no argument specifier auto-approves every command, which
-# is the one shape the grant must not take: this skill runs a single read-only
-# query and nothing else.
 BARE_BASH = "Bash"
 
-# The published argument the skill takes, as its hint spells it.
 SLUG_HINT = "[slug]"
 
-# The path tail shared by the frontmatter Bash grant and the body's citation of
-# the substrate. The two spell the directory above it differently on purpose --
-# the grant hops through `${CLAUDE_SKILL_DIR}/..` because `${CLAUDE_PLUGIN_ROOT}`
-# is not substituted inside an `allowed-tools` rule, while the body cites
-# `${CLAUDE_PLUGIN_ROOT}` as the epic requires -- so this tail is the longest
-# string both can be held to.
 SCRIPT_TAIL = "product-artifacts/scripts/product_artifact.py"
 
-# One stable token per runtime rule the skill is required to publish, each
-# mapped to the rule it anchors. Tokens rather than sentences: the wording of a
-# shipped report format is its author's, and pinning it would mean rewording
-# prose only by editing CI.
-#
-# Each token is chosen to be one the rejected form of its rule would not carry.
-# `earliest` is the clearest case: the rule this skill walks by is chain order,
-# stopping at the first member that is absent or stale, and the alternative it
-# replaced -- all absent members outranking all stale ones -- recommends
-# building on an upstream already reported as out of date. Both spellings would
-# still say `chain order` somewhere, so `chain order` would not tell them apart.
 RUNTIME_ANCHORS = {
     "earliest": "the walk order, which fixes the earliest broken member rather than the first gap",
     "product-issues": "the recommendation the chain walk reaches when no member needs work",
@@ -89,28 +33,15 @@ RUNTIME_ANCHORS = {
     "re-read": "the re-run rule, which is that every invocation reads current state afresh",
 }
 
-# The git plumbing #23 bans this skill from shelling to. A command name from
-# outside this repository, so unlike the provenance prefix it has no published
-# home here to be read out of.
 FORBIDDEN_COMMAND = "hash-object"
 
-# A citing body names a member or two by way of example. Naming all five is the
-# enumeration the epic's cite-don't-restate rule exists to prevent.
 MAX_MEMBERS_NAMED = CHAIN_LENGTH - 1
 
-# The fence that opens and closes a frontmatter block, and the one that opens
-# and closes a markdown code block.
 FENCE = "---"
 CODE_FENCE = "```"
 
 
 def _load(name: str, directory: Path) -> Any:
-    """Load a shipped script by path.
-
-    pytest runs with `--import-mode=importlib`, which does not put a test
-    file's own directory on `sys.path`, and the repo's other contract modules
-    already load their neighbours this way.
-    """
     spec = importlib.util.spec_from_file_location(name, directory / f"{name}.py")
     assert spec and spec.loader, f"cannot load {directory / f'{name}.py'}"
     module = importlib.util.module_from_spec(spec)
@@ -122,22 +53,10 @@ product_artifact = _load("product_artifact", ARTIFACT_SCRIPTS)
 
 
 def _cells(row: str) -> list[str]:
-    """Split one markdown table row into undecorated cell values.
-
-    Backticks are stripped so assertions compare published names rather than
-    the document's formatting choices.
-    """
     return [cell.strip().strip("`").strip() for cell in row.strip().strip("|").split("|")]
 
 
 def _members_table() -> list[tuple[str, str, str, str]]:
-    """Parse `## Members` into one `(member, upstream, position, owning_skill)` per row.
-
-    Rows come back in table order. Raises instead of returning an empty list
-    when the section, the table, or its expected columns are missing: every
-    assertion in this module is a statement about rows, and all of them would
-    pass vacuously against a document that had stopped publishing the contract.
-    """
     heading = "\n## Members\n"
     text = ARTIFACT_FAMILY.read_text()
     start = text.find(heading)
@@ -149,7 +68,6 @@ def _members_table() -> list[tuple[str, str, str, str]]:
     if next_heading != -1:
         section = section[:next_heading]
 
-    # A markdown table is a run of pipe lines: header, separator, then rows.
     pipe_lines = [line for line in section.splitlines() if line.lstrip().startswith("|")]
     if len(pipe_lines) < 3:
         raise AssertionError(
@@ -178,18 +96,6 @@ def _members_table() -> list[tuple[str, str, str, str]]:
 
 
 def _provenance_prefix() -> str:
-    """The fixed part of the provenance line, read from the file that owns it.
-
-    `## Provenance` in artifact-family.md publishes the whole line as a template
-    in a fenced block, and everything up to and including its colon is the part
-    a citing file could copy into itself. Read from there rather than written
-    out here: a copy in this module would go on matching the retired spelling
-    after the published format changed, leaving a ban that protects nothing and
-    says nothing about it.
-
-    Located positionally -- the section's first fenced block, that block's first
-    non-blank line -- so finding the line needs no fragment of the line.
-    """
     heading = "\n## Provenance\n"
     text = ARTIFACT_FAMILY.read_text()
     start = text.find(heading)
@@ -223,13 +129,6 @@ def _provenance_prefix() -> str:
 
 
 def _split_skill() -> tuple[str, str]:
-    """The shipped `SKILL.md` as `(frontmatter block, body)`.
-
-    Raises rather than returning empty strings when the file or its fences are
-    missing. Every assertion below is a statement about something the file
-    declares or states, and a file that declares nothing would satisfy most of
-    them by having no offending text in it.
-    """
     if not SKILL.is_file():
         raise AssertionError(f"{SKILL} does not exist, so product-status ships no invocable skill")
 
@@ -248,14 +147,6 @@ def _split_skill() -> tuple[str, str]:
 
 
 def _frontmatter_fields() -> dict[str, str]:
-    """The frontmatter block as `{key: raw value}`, one entry per top-level key.
-
-    Keys are matched at column 0, so the YAML comment above the Bash grant, and
-    any indented look-alike, cannot satisfy a check. Only single-line values are
-    read: every field asserted below is a short scalar, and one moved into a
-    folded block or a YAML sequence reads back empty, which the presence checks
-    report rather than skip over.
-    """
     fields: dict[str, str] = {}
     for line in _split_skill()[0].splitlines():
         if line.startswith((" ", "\t", "#")) or ":" not in line:
@@ -266,17 +157,6 @@ def _frontmatter_fields() -> dict[str, str]:
 
 
 def _tool_entries(fields: dict[str, str], field: str) -> list[str]:
-    """One tool field's entries, split on commas at the top level only.
-
-    A comma inside a `Bash(...)` specifier belongs to the specifier. Splitting
-    naively would report such a rule as two entries, neither of which is the
-    bare string `Bash`, so a check for a bare grant would pass on text that
-    never contained one.
-
-    Raises when the field is absent or empty: "no entry here is a bare `Bash`"
-    and "these four tools are denied" are both vacuously true of a field that
-    declares nothing.
-    """
     raw = fields.get(field, "")
     if not raw:
         raise AssertionError(
@@ -304,8 +184,6 @@ def _tool_entries(fields: dict[str, str], field: str) -> list[str]:
 def test_owning_skill_column_is_a_complete_bijection() -> None:
     rows = _members_table()
 
-    # Asserted first: a parser that found nothing must fail here rather than
-    # sail through every check below on an empty list.
     assert len(rows) == CHAIN_LENGTH, (
         f"`## Members` has {len(rows)} rows, expected the closed chain's {CHAIN_LENGTH}: {rows}"
     )
@@ -330,13 +208,6 @@ def test_owning_skill_column_is_a_complete_bijection() -> None:
 
 
 def test_named_beats_are_well_formed() -> None:
-    # The bijection test only proves the cells are filled and distinct, which
-    # arbitrary text also satisfies. This checks each names something shaped
-    # like a beat, and -- one way only, per the plan's decision 3 -- that any
-    # beat already on disk is invocable. The reverse direction is deliberately
-    # absent: `skills/product-*/` also globs the substrate package, which owns
-    # no member, so requiring every product-* skill to appear in the table
-    # would be false by construction.
     for row in _members_table():
         member, _upstream, _position, owning_skill = row
         assert owning_skill.startswith("product-"), (
@@ -351,10 +222,6 @@ def test_named_beats_are_well_formed() -> None:
 
 
 def test_table_matches_the_shipped_member_tuple() -> None:
-    # product_artifact.py's MEMBERS comment promises it must not drift from
-    # this table, and nothing else checks it. The assertions above read member
-    # names from the table, so table and implementation agreeing is what makes
-    # those assertions statements about the shipped chain.
     tabled = [row[0] for row in _members_table()]
     assert tabled == list(product_artifact.MEMBERS), (
         f"`## Members` lists {tabled} but product_artifact.MEMBERS is "
@@ -365,9 +232,6 @@ def test_table_matches_the_shipped_member_tuple() -> None:
 def test_frontmatter_declares_the_read_only_contract() -> None:
     fields = _frontmatter_fields()
 
-    # Both fields are read up front: each raises on an absent or empty
-    # declaration, which is the failure that would otherwise make the
-    # assertions below statements about nothing.
     allowed = _tool_entries(fields, "allowed-tools")
     denied = _tool_entries(fields, "disallowed-tools")
 
@@ -408,10 +272,6 @@ def test_frontmatter_declares_the_read_only_contract() -> None:
 
 
 def test_grant_and_body_name_one_script() -> None:
-    # One file names one script twice, in two variable syntaxes, because
-    # ${CLAUDE_PLUGIN_ROOT} does not expand inside an allowed-tools rule. This
-    # is what makes a rename fail loudly instead of silently unhooking the
-    # grant, leaving a prompt on every run and no other symptom.
     frontmatter, body = _split_skill()
     grant = _frontmatter_fields().get("allowed-tools", "")
 
@@ -425,9 +285,6 @@ def test_grant_and_body_name_one_script() -> None:
 
 
 def test_skill_publishes_its_runtime_rules() -> None:
-    # Epic constraint 11 makes each beat publish its own rules as prose. Prose
-    # is unreadable to CI unless something names the tokens it turns on, so
-    # each anchor below is a rule that would otherwise be enforced by nobody.
     body = _split_skill()[1]
 
     for anchor, rule in RUNTIME_ANCHORS.items():
@@ -441,9 +298,6 @@ def test_skill_publishes_its_runtime_rules() -> None:
 def test_skill_does_not_reimplement_freshness() -> None:
     body = _split_skill()[1]
 
-    # The provenance prefix is read out of the published contract rather than
-    # spelled here, so this ban follows a rename of the format instead of going
-    # quietly stale against it.
     for internal in (FORBIDDEN_COMMAND, _provenance_prefix()):
         assert internal not in body, (
             f"{SKILL.name}'s body names {internal!r}, which belongs to the substrate alone. "
@@ -454,11 +308,6 @@ def test_skill_does_not_reimplement_freshness() -> None:
 
 
 def test_skill_cites_rather_than_enumerating() -> None:
-    # Both bounds carry weight and neither alone is enough. The upper bound is
-    # the epic's enumeration ban; the lower is what stops a near-empty stub
-    # from passing, since a body naming no member at all satisfies "at most
-    # four" trivially. Member names come from the published table rather than a
-    # list here, so this is a statement about the real chain.
     members = [row[0] for row in _members_table()]
     body = _split_skill()[1]
     named = [member for member in members if member in body]

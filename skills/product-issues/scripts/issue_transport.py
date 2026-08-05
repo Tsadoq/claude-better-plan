@@ -1,41 +1,3 @@
-#!/usr/bin/env python3
-"""The single seam every outbound tracker call travels through.
-
-Three callers need the same picture of what a tracker call is: the code that
-files, the dry run that must describe filing without performing it, and an
-offline test suite. Giving them three mechanisms is how a dry run starts
-describing something other than what filing does, so they share one port
-instead. `Transport` is that port; `GhTransport` and `RestTransport` execute,
-`DryRunTransport` describes, and the tests supply their own fake.
-
-The port carries exactly two methods. `run` covers labels, links and reads,
-where the CLI and REST spellings differ only in how a call is written down.
-Creating an issue needs its own method because there the two paths differ in
-what they can *return*: REST hands back the database id on the 201 itself,
-while `gh issue create` prints a URL and has no `--json` flag, so the number
-must be parsed out of it and the id fetched separately. Normalising that inside
-each implementation is what lets an adapter hold a `Transport` without ever
-asking which one it is.
-
-Standard library only, like every script in this suite: `urllib.request` rather
-than an HTTP client, `subprocess` rather than a CLI wrapper.
-
-Two behaviours here are not obvious and are load-bearing:
-
-- Redirects are handled by hand. The stdlib's `HTTPRedirectHandler` copies a
-  request's headers across a redirect, stripping only `content-length` and
-  `content-type`, so an automatic redirect would hand this transport's bearer
-  token to whatever host the `Location` names. `RestTransport` therefore turns
-  redirects off and re-issues them itself, dropping `Authorization` whenever the
-  origin changes.
-- The API version is sent explicitly. GitHub pins a request that omits
-  `X-GitHub-Api-Version` to `2022-11-28`, which is what `gh` 2.82.0 sends. A
-  REST path that let the header default would run a different API version from
-  the CLI path, which is two transports with two behaviours.
-
-Every failure raises `TransportError`; a returned `Result` therefore always
-means the call succeeded.
-"""
 
 from __future__ import annotations
 
@@ -51,44 +13,26 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, TextIO
 
-# The current GitHub REST API version. Sent on both paths -- see the module
-# docstring for why leaving it to default is not equivalent.
 API_VERSION = "2026-03-10"
 
-# GitHub asks that every request name its sender; an unnamed User-Agent is
-# rejected outright.
 USER_AGENT = "claude-better-plan-product-issues"
 
 GITHUB_API_BASE = "https://api.github.com"
 
-# Generous enough for a slow network, short enough that a hung call fails
-# inside one working session rather than blocking a batch indefinitely.
 DEFAULT_TIMEOUT = 30.0
 
 MAX_REDIRECTS = 5
 
-# GitHub's documented secondary limit on content creation. Issue creation is
-# exactly the shape this limit exists to catch, so creates are spaced rather
-# than fired and retried.
 CONTENT_CREATIONS_PER_MINUTE = 80
 _CREATE_INTERVAL = 60.0 / CONTENT_CREATIONS_PER_MINUTE
 
-# 403 appears alongside 429 because GitHub answers a tripped secondary limit
-# with either one. A 403 that carries no rate-limit hint is a permission
-# failure and is never retried; `_throttle_delay` is what tells them apart.
 _THROTTLED = frozenset({403, 429})
 _MAX_RETRIES = 3
 
-# A retry hint far in the future is a signal to stop, not to sleep through the
-# afternoon, so a wait longer than this fails the call instead.
 _MAX_RETRY_SLEEP = 60.0
 
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 
-# The scheme on the placeholder URLs a dry run hands back. Deliberately not
-# https: a placeholder that reached a ledger or a report has to be unmistakable
-# there, and a scheme nothing can resolve says so at a glance where a plausible
-# github.com URL would not.
 DRY_RUN_URL_SCHEME = "dry-run"
 
 
@@ -266,8 +210,6 @@ class GhTransport:
         ]
         stdin = None
         if invocation.body is not None:
-            # `--input -` rather than `-f key=value`, which would send every
-            # value as a string and so turn a database id into text.
             argv += ["--input", "-"]
             stdin = json.dumps(invocation.body)
         return self._shell(argv, stdin, invocation.summary)
@@ -387,9 +329,6 @@ class RestTransport:
         try:
             response = self._opener.open(request, timeout=self._timeout)
         except urllib.error.HTTPError as err:
-            # With redirects disabled the stdlib surfaces every 3xx and 4xx as
-            # an exception which is itself the response, so it is read as one
-            # rather than treated as a failure here; `run` decides.
             return int(err.status or err.code), err.headers, err.read()
         except OSError as err:
             raise CallFailed(summary, None, str(err)) from err

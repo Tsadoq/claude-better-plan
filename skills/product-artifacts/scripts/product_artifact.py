@@ -1,25 +1,3 @@
-#!/usr/bin/env python3
-"""Query and mutate core for the docs/product/<slug>/ artifact family.
-
-Usage:
-    product_artifact.py --exists --slug <slug> --product-dir <dir>
-    product_artifact.py --resolve-slug --slug <slug> --product-dir <dir>
-    product_artifact.py --check-freshness --product-dir <dir> [--slug <slug>]
-    product_artifact.py --provenance-line --slug <slug> --member <member> --product-dir <dir>
-    product_artifact.py --ensure-folder --slug <slug> --product-dir <dir>
-
-`--exists`, `--resolve-slug`, `--check-freshness` and `--provenance-line`
-each answer a caller's question about chain state in a single call and are
-read-only: none creates a folder or a member file. `--ensure-folder` is the
-package's one writing entry point: it creates the slug folder (parents,
-exist-ok) and then regenerates the product index unconditionally, so a folder
-without its index row is never a state a caller can observe (see
-`references/artifact-family.md`'s `## Re-run behaviour`).
-
-The member chain and its provenance/staleness rules are published in
-`skills/product-artifacts/references/artifact-family.md`; this module is
-that contract's only implementation and must not drift from it.
-"""
 
 from __future__ import annotations
 
@@ -31,15 +9,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Plugin-root lib/ carries the slug rules shared with every artifact family;
-# see lib/artifact_common.py's module docstring for why this is a sys.path
-# bootstrap rather than a package import.
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
 import artifact_common  # noqa: E402
 
-# The closed five-member chain, in chain order. Mirrors the `## Members`
-# table in artifact-family.md; that table is the published source of truth
-# and this tuple must not drift from it.
 MEMBERS: tuple[str, ...] = (
     "brief.md",
     "discovery.md",
@@ -48,27 +20,15 @@ MEMBERS: tuple[str, ...] = (
     "roadmap.md",
 )
 
-# Each member after the first, mapped to its immediate predecessor.
 UPSTREAM: dict[str, str] = {member: MEMBERS[i - 1] for i, member in enumerate(MEMBERS) if i > 0}
 
-# The product family has no legacy flat form, unlike docs/plans/, so slug
-# collision checks pass no extra_suffixes.
 _NO_EXTRA_SUFFIXES: tuple[str, ...] = ()
 
-# The published provenance line, matched anywhere in a member's text (see
-# artifact-family.md's `## Provenance`): a bare upstream filename and exactly
-# 40 lowercase hex characters, tolerant of surrounding whitespace on the line
-# but anchored at both ends so a truncated sha or trailing garbage fails to
-# match rather than passing silently.
 PROVENANCE_RE = re.compile(
     r"^[ \t]*\*\*Derived from\*\*:[ \t]*(\S+)[ \t]+\(([0-9a-f]{40})\)[ \t]*$",
     re.MULTILINE,
 )
 
-# The same line as a template, for `cmd_provenance_line` to fill. It sits
-# next to `PROVENANCE_RE` because the two describe one format from opposite
-# ends -- emit and validate -- and a change to either that is not mirrored in
-# the other produces lines this module writes and then refuses.
 _PROVENANCE_TEMPLATE = "**Derived from**: {upstream} ({sha})"
 
 
@@ -244,12 +204,6 @@ def cmd_provenance_line(raw_slug: str, member: str, product_dir: Path) -> dict[s
 
     sha: str | None = None
     line: str | None = None
-    # The validity check is what stops an invalid slug from being hashed
-    # against the wrong folder: `normalise_slug` can return the empty string,
-    # and `product_dir / ""` is `product_dir` itself, so an unguarded join
-    # would hash a stray `brief.md` lying beside the slug folders and hand
-    # back a confident line for a member that has no chain at all. Same rule
-    # as `_absent_members`: an invalid slug gets no folder constructed for it.
     if upstream is not None and artifact_common.is_valid_slug(slug):
         upstream_path = product_dir / slug / upstream
         if upstream_path.exists():
@@ -265,8 +219,6 @@ def cmd_provenance_line(raw_slug: str, member: str, product_dir: Path) -> dict[s
     }
 
 
-# The index README's file name and marker pair, module-level so both the
-# writer here and a future reader agree on one literal each.
 PRODUCT_README_NAME = "README.md"
 _PRODUCT_MARKERS = artifact_common.markers("product")
 
@@ -346,20 +298,11 @@ def main() -> int:
     parser.add_argument("--check-freshness", action="store_true")
     parser.add_argument("--provenance-line", action="store_true")
     parser.add_argument("--ensure-folder", action="store_true")
-    # Required by every entry point except --check-freshness, which alone
-    # accepts it being absent (see below); left unrequired here so argparse's
-    # own usage-text exit never fires and every failure this script reports is
-    # JSON.
     parser.add_argument("--slug")
-    # Meaningful only to --provenance-line, which names one member of the
-    # chain; unrequired here for the same JSON-only reason as --slug.
     parser.add_argument("--member")
     parser.add_argument("--product-dir", required=True)
     args = parser.parse_args()
 
-    # Exactly one entry-point flag is the only failure mode this script
-    # owns; zero or several is a caller error, reported as JSON rather than
-    # argparse's usage text so every failure this script reports is JSON.
     entry_points = {
         "exists": args.exists,
         "resolve_slug": args.resolve_slug,
@@ -383,9 +326,6 @@ def main() -> int:
         )
         return 1
 
-    # Every entry point but --check-freshness needs a slug to work from;
-    # --check-freshness alone accepts it being absent, because absent means
-    # "every slug" there (see cmd_check_freshness).
     if chosen[0] != "check_freshness" and args.slug is None:
         print(
             json.dumps(
@@ -395,8 +335,6 @@ def main() -> int:
         )
         return 1
 
-    # --provenance-line answers about one named member, so it has no default
-    # to fall back on; the other four entry points ignore --member entirely.
     if chosen[0] == "provenance_line" and args.member is None:
         print(json.dumps({"error": "--member is required for --provenance-line"}, indent=2))
         return 1

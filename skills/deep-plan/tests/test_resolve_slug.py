@@ -1,9 +1,3 @@
-"""Tests for resolve_slug.py: normalisation, validation, and collision handling.
-
-Runnable two ways:
-    python3 skills/deep-plan/tests/test_resolve_slug.py
-    python3 -m pytest skills/deep-plan/tests/test_resolve_slug.py
-"""
 
 from __future__ import annotations
 
@@ -18,8 +12,6 @@ from typing import Any
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 
-# resolve_slug imports finalize_plan as a sibling; put scripts/ on the path so
-# both resolve when the test runner's cwd is elsewhere.
 sys.path.insert(0, str(SCRIPTS))
 
 
@@ -56,7 +48,6 @@ def test_normalise_slug_lowercases_spaces_and_collapses_hyphens() -> None:
 def test_normalise_slug_caps_length() -> None:
     out = resolve.normalise_slug("x" * 70)
     assert len(out) <= resolve.MAX_SLUG_LEN
-    # A truncation that lands on a hyphen is trimmed.
     assert not out.endswith("-")
 
 
@@ -90,7 +81,6 @@ def test_collision_detected_with_context_and_auto_suffix() -> None:
 
 
 def test_folder_collision_and_v_suffix_skips_both_forms() -> None:
-    # A folder plan alone is a collision, with context read from its plan.md.
     with tempfile.TemporaryDirectory() as d:
         plans = Path(d)
         (plans / "x").mkdir()
@@ -101,14 +91,12 @@ def test_folder_collision_and_v_suffix_skips_both_forms() -> None:
         assert result["collision"] is True
         assert "Folder-form plan body" in result["collision_context"]
 
-    # v-suffix search skips candidates existing in either form.
     with tempfile.TemporaryDirectory() as d:
         plans = Path(d)
         (plans / "x.md").write_text("x")
         (plans / "x-v2").mkdir()
         assert resolve.next_v_suffix(plans, "x") == "x-v3"
 
-    # A collision-free slug resolves to the folder-write path.
     with tempfile.TemporaryDirectory() as d:
         result = _run_main(["--slug", "fresh", "--plans-dir", d])
         assert result["collision"] is False

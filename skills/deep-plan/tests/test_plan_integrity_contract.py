@@ -1,14 +1,3 @@
-"""Contract test: the plan-integrity guidance content.
-
-Pins the structure of skills/deep-plan/references/plan-integrity-principles.md
-(the cluster source that replaced the standalone dp-plan-critic agent) so the
-Phase 4.6 fleet can quote it by heading and never silently lose a check.
-Stdlib only, so CI does not need pyyaml.
-
-Runnable two ways:
-    python3 skills/deep-plan/tests/test_plan_integrity_contract.py
-    python3 -m pytest skills/deep-plan/tests/test_plan_integrity_contract.py
-"""
 
 from __future__ import annotations
 
@@ -24,13 +13,10 @@ PRINCIPLES_H2 = (
     "## How to update these guidelines",
 )
 
-# The four check classes dp-plan-critic uniquely owned. Each must survive as at
-# least one checkable question, or retiring that agent lost coverage.
 REQUIRED_CHECKS = ("schedule", "depends on", "decision", "tests (tdd)", "claim")
 
 
 def _section(text: str, heading: str) -> str:
-    """Return the body of an H2 section (from its heading to the next H2)."""
     start = text.find(heading)
     if start == -1:
         return ""
@@ -39,7 +25,6 @@ def _section(text: str, heading: str) -> str:
 
 
 def _clusters(section: str) -> list[str]:
-    """Split an H2 section body into its H3 cluster bodies."""
     parts = section.split("\n### ")
     return ["### " + part for part in parts[1:]]
 

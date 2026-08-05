@@ -1,13 +1,3 @@
-#!/usr/bin/env python3
-"""SessionEnd hook for the deep-plan skill.
-
-Removes the ending session's state file and sandbox directory. Also runs a
-defensive sweep of any /tmp/deep-plan-* dirs and state-dir JSONs older than
-7 days (crash-killed sessions never fire SessionEnd, so aged leftovers are
-pruned here).
-
-Never blocks session end. All exceptions are swallowed silently.
-"""
 
 from __future__ import annotations
 

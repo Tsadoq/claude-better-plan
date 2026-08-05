@@ -1,17 +1,3 @@
-"""Contract test: the shapes and caps around the test-guidance rubric.
-
-Pins what a substring cannot express: the red-flag cluster count in
-skills/tdd-review/references/test-principles.md, the tdd-review skill
-wrapper's frontmatter schema, the synthesis lens catalogue, and the
-red-then-green-then-rerun ordering in the implementer agent. Which files must
-cite which rubric is pinned instead by tests/guarantees.py, and how long a
-frontmatter description may be by tests/test_description_budget.py. Stdlib
-only, so CI does not need pyyaml.
-
-Runnable two ways:
-    python3 skills/tdd-review/tests/test_test_principles_contract.py
-    python3 -m pytest skills/tdd-review/tests/test_test_principles_contract.py
-"""
 
 from __future__ import annotations
 
@@ -27,7 +13,6 @@ PERSPECTIVES = ROOT / "skills" / "deep-plan" / "references" / "perspectives.md"
 DEEP_PLAN_SKILL = ROOT / "skills" / "deep-plan" / "SKILL.md"
 PHASE_PROMPTS = ROOT / "skills" / "deep-plan" / "references" / "phase-prompts.md"
 
-# The synthesis lenses, all six of which the synthesis turn sweeps in-turn.
 LENSES = (
     "simplicity",
     "performance",
@@ -37,8 +22,6 @@ LENSES = (
     "deep-modules",
 )
 
-# perspectives.md is asserted on from two skills' contract tests; its own
-# registry section must name both so an edit there cannot orphan a pin.
 PERSPECTIVES_PINNING_TESTS = (
     "skills/tdd-review/tests/test_test_principles_contract.py",
     "skills/design-review/tests/test_design_review_contract.py",
@@ -57,7 +40,6 @@ finalize = _load("finalize_plan")
 
 
 def _section(text: str, heading: str) -> str:
-    """Return the body of an H2 section (from its heading to the next H2)."""
     start = text.find(heading)
     if start == -1:
         return ""
@@ -66,7 +48,6 @@ def _section(text: str, heading: str) -> str:
 
 
 def _clusters(section: str) -> list[str]:
-    """Split an H2 section body into its H3 cluster bodies."""
     parts = section.split("\n### ")
     return ["### " + part for part in parts[1:]]
 
@@ -90,12 +71,8 @@ def test_test_principles_structure() -> None:
 def test_tdd_review_skill_contract() -> None:
     assert TDD_REVIEW_SKILL.exists(), f"missing skill wrapper: {TDD_REVIEW_SKILL}"
     text = TDD_REVIEW_SKILL.read_text()
-    # Search from offset 3 to skip the opening "---" delimiter and find the
-    # closing one, so `frontmatter` is everything between the two fences.
     frontmatter = text[: text.index("\n---", 3)]
 
-    # Line-anchored key checks: a top-level YAML key starts at column 0, so a
-    # commented-out or nested look-alike cannot satisfy them.
     lines = frontmatter.splitlines()
     assert any(line == "name: tdd-review" for line in lines), (
         "frontmatter missing top-level 'name: tdd-review' key"
@@ -106,17 +83,9 @@ def test_tdd_review_skill_contract() -> None:
     assert "disable-model-invocation" not in frontmatter, (
         "tdd-review must stay model-invocable: drop the disable-model-invocation key"
     )
-    # How long that description may be is not asserted here. The cap on a
-    # listing entry is a property of the whole plugin's frontmatter, not of
-    # this skill, and tests/test_description_budget.py holds it for every skill
-    # at once -- including this one, the day it is added.
 
 
 def test_lens_catalogue_is_a_synthesis_checklist() -> None:
-    # The lenses are swept inside the synthesis turn, not drafted by a fan-out
-    # of agents, so the catalogue must read as a checklist one reader walks.
-    # Nine-field Tests coverage is NOT asserted here: test_template_contract.py
-    # owns it against references/plan-file-template.md, in TESTS_FIELDS order.
     text = PERSPECTIVES.read_text()
 
     checklist = _section(text, "## Synthesis checklist")
@@ -144,9 +113,6 @@ def test_phase46_launches_test_critic_fleet() -> None:
     assert "test-principles.md" in PHASE_PROMPTS.read_text(), (
         "phase-prompts.md must mirror the Phase 4.6 test fleet"
     )
-    # Test-quality judgment stays with the fleet reading test-principles.md: the
-    # plan-integrity cluster that replaced the standalone critic checks
-    # Tests-block *structure* only, and must say which run owns the rest.
     integrity = ROOT / "skills" / "deep-plan" / "references" / "plan-integrity-principles.md"
     assert "test-principles.md" in integrity.read_text(), (
         "plan-integrity-principles.md must defer test-quality judgment to the fleet "
@@ -155,14 +121,10 @@ def test_phase46_launches_test_critic_fleet() -> None:
 
 
 def test_execute_loop_quotes_run_rules_and_rechecks_stability() -> None:
-    # The per-task loop, and with it the run rules and the stability re-run, now
-    # live in the implementer agent. The agent reads the rule sections itself
-    # instead of having the dispatcher quote them into a prompt.
     agent = (ROOT / "agents" / "dp-implement-task.md").read_text()
     for needle in ("dp-critic", "Execute-time run rules", "Execute-time craft rules"):
         assert needle in agent, f"dp-implement-task.md must reference {needle!r}"
 
-    # Ordering: red before green, and the stability re-run after green.
     red_pos = agent.index("Prove red")
     green_pos = agent.index("Prove green")
     stability_pos = agent.index("Re-run `verification`")

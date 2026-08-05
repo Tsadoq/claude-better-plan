@@ -1,9 +1,3 @@
-"""Tests for load_tasks.py: parse a finalized plan into structured tasks.
-
-Runnable two ways:
-    python3 skills/deep-plan/tests/test_load_tasks.py
-    python3 -m pytest skills/deep-plan/tests/test_load_tasks.py
-"""
 
 from __future__ import annotations
 
@@ -19,8 +13,6 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 GOLDEN = Path(__file__).resolve().parent / "golden" / "example-plan.md"
 LEGACY = Path(__file__).resolve().parent / "golden" / "legacy-plan.md"
 
-# load_tasks imports finalize_plan as a sibling; put scripts/ on the path so
-# both resolve when the test runner's cwd is elsewhere.
 sys.path.insert(0, str(SCRIPTS))
 
 import finalize_plan  # noqa: E402
@@ -71,14 +63,11 @@ def test_parses_golden_plan_tasks_and_deps() -> None:
         assert t["subject"].strip(), f"task {t['n']} has empty subject"
         assert t["change"].strip(), f"task {t['n']} has empty change"
 
-    # Golden has a code task (with Tests block) and a docs task (without one).
     assert t1["tests"], "task 1 (code) should carry a Tests block"
     assert not t2["tests"], "task 2 (docs) should have no Tests block"
 
 
 def test_task_selector_returns_only_the_requested_task() -> None:
-    # The dispatcher hands a task number to the implementer subagent, which
-    # fetches its own task body rather than being fed re-typed plan fields.
     code, payload = _run_main(["--plan", str(GOLDEN), "--task", "2"])
     assert code == 0, f"--task 2 should exit 0, got {code}: {payload}"
 
@@ -105,14 +94,11 @@ def test_malformed_depends_on_degrades_to_empty() -> None:
     assert load_tasks.parse_depends_on("none") == []
     assert load_tasks.parse_depends_on("1") == [1]
     assert load_tasks.parse_depends_on("1, 2,3") == [1, 2, 3]
-    # Garbage must not raise; it degrades to an empty list.
     assert load_tasks.parse_depends_on("see task above") == []
     assert load_tasks.parse_depends_on("") == []
 
 
 def test_legacy_plan_parses_and_repairs_clean() -> None:
-    # legacy-plan.md is a byte-frozen copy of the v0.7 golden: plans authored
-    # under the old format must keep parsing and repairing clean forever.
     legacy = LEGACY.read_text()
 
     parsed = load_tasks.parse_plan(legacy)

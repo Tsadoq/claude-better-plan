@@ -1,12 +1,3 @@
-"""Tests for the cleanup.py SessionEnd hook: session teardown + 7-day TTL sweep.
-
-Everything is redirected into throwaway tmp dirs; the real /tmp and the real
-state dir are never touched.
-
-Runnable two ways:
-    python3 skills/deep-plan/tests/test_cleanup.py
-    python3 -m pytest skills/deep-plan/tests/test_cleanup.py
-"""
 
 from __future__ import annotations
 
@@ -68,7 +59,6 @@ def test_session_teardown_and_ttl_sweep() -> None:
         eight_days_ago = time.time() - 8 * 86400
         os.utime(old_dir, (eight_days_ago, eight_days_ago))
 
-        # Point the module's module-level paths at the sandbox.
         orig_state, orig_tmp = cleanup.STATE_DIR, cleanup.TMP
         cleanup.STATE_DIR = state_dir
         cleanup.TMP = tmp
@@ -84,8 +74,6 @@ def test_session_teardown_and_ttl_sweep() -> None:
 
 
 def test_cleanup_tolerates_minimal_state() -> None:
-    # Pins that cleanup.py reads only sandbox_dir: the new minimal state shape
-    # (no phase, decisions, harness_plan_path, archive_plan_path) must succeed.
     with tempfile.TemporaryDirectory() as d:
         base = Path(d)
         tmp = base / "tmp"
@@ -123,9 +111,6 @@ def test_cleanup_tolerates_minimal_state() -> None:
 
 
 def test_cleanup_not_registered_on_stop() -> None:
-    # The hook must fire once per session (SessionEnd), not at the end of every
-    # assistant turn (Stop): a Stop binding deletes the live session's state
-    # file and sandbox mid-run.
     text = DEEP_PLAN_SKILL.read_text()
     assert text.startswith("---")
     end = text.find("\n---", 3)
@@ -134,8 +119,6 @@ def test_cleanup_not_registered_on_stop() -> None:
     assert "Stop:" not in fm_lines, "cleanup.py must not be bound to the per-turn Stop event"
     assert "SessionEnd:" in fm_lines, "cleanup.py must be bound to SessionEnd"
 
-    # Crash-killed sessions never fire SessionEnd, so the sweep must also
-    # prune aged state JSONs, while sparing fresh ones from live sessions.
     with tempfile.TemporaryDirectory() as d:
         base = Path(d)
         tmp = base / "tmp"
@@ -163,7 +146,6 @@ def test_cleanup_not_registered_on_stop() -> None:
 
 
 def test_missing_session_is_harmless() -> None:
-    # No session_id, empty payload: must not raise.
     orig_state, orig_tmp = cleanup.STATE_DIR, cleanup.TMP
     with tempfile.TemporaryDirectory() as d:
         cleanup.STATE_DIR = Path(d) / "state"

@@ -68,119 +68,16 @@ class Guarantee(NamedTuple):
     params: Mapping[str, Any]
 
 
-# Every size limit this plan enforces. Most are in deterministic offline units
-# (lines, characters, words); the two phase-instruction files are in `o200k_base`
-# tokens instead, because the constraint on them is a token window and no line
-# count expresses it. Token entries are measured with `tiktoken`, which the
-# suite treats as optional: where it is absent those two budgets do not run, so
-# they are a guard against drift over time rather than a hard gate on every box.
-#
-# A budget never justifies dropping a guarantee. If the two ever conflict, raise
-# the budget and record why beside it.
-#
-# Every number a size assertion compares against lives here rather than in the
-# test that reads it, so the limit and the reason for it stay in one place.
 BUDGETS: dict[str, int] = {
-    # Claude Code truncates one skill-listing entry -- a skill's `description`
-    # and `when_to_use` taken together -- past this length, which silently costs
-    # whatever routing keywords sit at its tail. This is the harness's number,
-    # settable as `skillListingMaxDescChars`; the published figure was 250 before
-    # it was raised to 1,536. No release is cited for that raise on purpose: the
-    # CHANGELOG names none of these settings keys anywhere, so any version number
-    # here would be someone's guess, and the two guesses in circulation disagree.
-    # The 1,536 itself is documented and current -- it is the figure that has to
-    # hold, not the release that introduced it.
-    #
-    # The separator the harness joins the two fields with is undocumented, so
-    # measuring their concatenation may undercount the real entry by a character
-    # or two -- recorded here rather than guessed at in the measurement, since
-    # the headroom dwarfs it. Skills only: the sub-agents reference states no
-    # character limit and has no `when_to_use` key, so agent descriptions answer
-    # to the word budget below and nothing else.
     "listing_entry_chars": 1536,
-    # The share of the whole skill listing this plugin allows itself. Unlike the
-    # per-entry cap this is not the harness's number, and there is no harness
-    # number to find: the harness budgets the listing and shortens it when it
-    # overflows -- dropping descriptions starting with the skills you invoke
-    # least, and never dropping a skill's name -- but it never asks how much of
-    # that budget came from one plugin. Losing a description is what costs us:
-    # the name survives, and a name alone routes on the folder name and nothing
-    # more. Four terms derive the ceiling.
-    #
-    #   200,000 tokens    the smaller of the two current context tiers, and a
-    #                     deliberately conservative floor rather than the tier
-    #                     the running model is on: Opus 5 and Sonnet 5 default
-    #                     to 1M. A ceiling derived from the 1M tier would pass
-    #                     for the users with the most room and overflow for
-    #                     everyone else.
-    #   x 1 percent       the documented fraction of the window the listing gets:
-    #                     "the budget scales at 1% of the model's context window".
-    #   x 4 chars/token   English prose, and this file's own approximation: no
-    #                     Anthropic documentation states a token-to-character
-    #                     conversion. The fraction is quoted against a token
-    #                     window while the budget is spent in characters, so some
-    #                     term has to bridge the two. This is the one to
-    #                     challenge first: it is unsourced, and the ceiling moves
-    #                     with it.
-    #   / 3               this plugin's share, and the openly judgemental term.
-    #                     No per-plugin share is documented anywhere, so this is
-    #                     wholly our convention and not a figure to match. The
-    #                     listing is shared with every other installed plugin and
-    #                     with the user's own skills, and a plugin of this size
-    #                     -- ten listed skills as this is written -- claiming a
-    #                     third of it is defensible where a half plainly is not.
-    #
-    # 200,000 x 0.01 x 4 / 3 is 2,666.67, floored rather than rounded: a ceiling
-    # that rounds up claims characters its own derivation does not support.
-    #
-    # A deployment can raise the real budget -- `skillListingBudgetFraction`
-    # resets the percentage, `SLASH_COMMAND_TOOL_CHAR_BUDGET` replaces it with a
-    # flat character count -- so a given session may have far more room than
-    # this. That is the reason to hold the line rather than to relax it: what we
-    # spend here is spent in every session that did *not* raise the budget.
     "listing_total_chars": 2666,
-    # A description's routing job is done by the condition it opens with, and 40
-    # words is room enough for that condition in every skill and agent here. The
-    # ones that measured over it -- 96, 85, 79 -- were all spending the overage
-    # on body mechanics: which phase launches an agent, which script it calls.
-    # Unlike `listing_entry_chars` this is our own target, not the harness's cap:
-    # nothing truncates at 40 words. What it buys is that the ten descriptions a
-    # router reads on every turn stay collectively small, which is the only cost
-    # in this plugin no user can opt out of.
     "description_words": 40,
-    # The harness re-attaches a skill body under a front-anchored truncation
-    # window of about 5,000 tokens, so a longer SKILL.md silently loses its tail
-    # phases -- Phase 5 and the output budget -- on every re-attach. It sat at
-    # 4,900 to hold 100 tokens of slack against that window, because o200k_base
-    # is only the closest public approximation of the harness's own accounting.
-    # That slack has been spent: raised to 4,999 for Phase 1's spec-detection
-    # paragraph, which teaches Phase 1 to find and offer a written
-    # `docs/product/` spec and is the whole of that feature's instruction. It
-    # measured 142 tokens and could not fit the 69 that were left. 4,999 is the
-    # ceiling issue #14 constraint 7 permits, so this entry cannot be raised
-    # again -- and with the file now at 4,973, only 26 tokens remain under it.
-    # The next author is spending the last of a nearly exhausted entry, not
-    # opening a fresh allowance: anything larger displaces text already there,
-    # or goes to a reference file, which is the cheapest place for new bytes
-    # because this is the one tier that is re-read.
     "deep_plan_skill_tokens": 4999,
-    # phase-prompts.md pays nothing until a phase reads it, so this is not a
-    # window, it is a ratchet. The file measured 4,608 tokens while it still
-    # restated SKILL.md and 1,892 once it stopped; the cap sits above the latter
-    # with room for a phase to gain real detail, but far enough below the former
-    # that a restated paragraph shows up as a failure.
     "phase_prompts_tokens": 2400,
-    # fleet-orchestration.md is quoted by five callers, so every line of it is
-    # paid for in an orchestrator's context whether or not a fleet ever runs.
-    # It measured 178 lines while it still carried the leaf's judging prose;
-    # the cap is the ratchet that keeps that prose in `agents/dp-critic.md`.
-    # Lines, not tokens, because over half the file is a JavaScript block and a
-    # token count of a code block says nothing a reader can act on.
     "fleet_recipe_lines": 150,
 }
 
 
-# --- Paths the inventory refers to more than once -------------------------
 
 DEEP_PLAN_SKILL = "skills/deep-plan/SKILL.md"
 EXECUTE_SKILL = "skills/deep-plan-execute/SKILL.md"
@@ -201,7 +98,6 @@ PLAN_INTEGRITY_PRINCIPLES = "skills/deep-plan/references/plan-integrity-principl
 IMPLEMENT_TASK_AGENT = "agents/dp-implement-task.md"
 CRITIC_AGENT = "agents/dp-critic.md"
 
-# Region bounds used by more than one guarantee.
 R1 = ("## R1", "## R2")
 R2 = ("## R2", "## Anti-patterns")
 PHASE_2 = ("## Phase 2", "## Phase 3")
@@ -214,7 +110,6 @@ PROMPTS_PHASE_46 = ("## Phase 4.6", "## Phase 5")
 
 
 GUARANTEES: tuple[Guarantee, ...] = (
-    # --- skills/deep-plan/SKILL.md ---------------------------------------
     Guarantee(
         "deep-plan-skill.section-sequence",
         DEEP_PLAN_SKILL,
@@ -376,13 +271,6 @@ GUARANTEES: tuple[Guarantee, ...] = (
         "path_exists",
         {"region": PHASE_46, "target": DESIGN_PRINCIPLES, "cited_as": "design-principles.md"},
     ),
-    # One critic agent serves five cluster sources, so the launch has to state
-    # the type outright. Five entries assert that it does -- this one, the
-    # design-review, tdd-review and product-review skills' own, and
-    # `implement-task-agent`'s -- and between them they are every launch site in
-    # the plugin; a site that stops naming the type has gone back to letting the
-    # harness match on agent descriptions, which is exactly what merging the
-    # critics removed.
     Guarantee(
         "deep-plan-skill.phase-46-launches-the-critic-by-agent-type",
         DEEP_PLAN_SKILL,
@@ -439,12 +327,6 @@ GUARANTEES: tuple[Guarantee, ...] = (
         "frontmatter_field",
         {"field": "name", "contains": "deep-plan"},
     ),
-    # --- skills/deep-plan/references/phase-prompts.md ---------------------
-    # This file no longer mirrors SKILL.md, so the guarantees it used to share
-    # with it moved rather than multiplied. The cluster-source citations and the
-    # Phase 5 handoff literal are now SKILL.md's alone, and the two R3 flows and
-    # three sentinel flows are edge-flows.md's; what stays here is what only
-    # this file says.
     Guarantee(
         "phase-prompts.no-depth-knob",
         PHASE_PROMPTS,
@@ -477,10 +359,6 @@ GUARANTEES: tuple[Guarantee, ...] = (
         "anchor_regex",
         {"patterns": (r"test ! -e .*test ! -e .*mv ",)},
     ),
-    # --- skills/deep-plan/references/edge-flows.md ------------------------
-    # One entry per trigger, because a flow whose trigger fires and whose text
-    # is gone leaves the orchestrator improvising at exactly the moment it must
-    # not: a stale plan file, or a write outside the read-only contract.
     Guarantee(
         "edge-flows.covers-every-sentinel-and-r3-trigger",
         EDGE_FLOWS,
@@ -507,7 +385,6 @@ GUARANTEES: tuple[Guarantee, ...] = (
         "script_invoked",
         {"script": "setup_session.py", "flag": "--update"},
     ),
-    # --- skills/deep-plan-execute/SKILL.md --------------------------------
     Guarantee(
         "execute-skill.step-sequence",
         EXECUTE_SKILL,
@@ -620,7 +497,6 @@ GUARANTEES: tuple[Guarantee, ...] = (
         "anchor_regex",
         {"patterns": (r"dp-[a-z-]*critic",), "absent": True},
     ),
-    # --- skills/design-review/references/fleet-orchestration.md -----------
     Guarantee(
         "fleet-recipe.section-spine",
         FLEET_RECIPE,
@@ -691,17 +567,12 @@ GUARANTEES: tuple[Guarantee, ...] = (
         "path_exists",
         {"target": PLAN_INTEGRITY_PRINCIPLES},
     ),
-    # The fifth cluster source is a family, not a file: `/product-review`
-    # composes the rubric path from the reviewed member's owning beat, so the
-    # recipe registers the shape those paths share and `path_exists` -- which
-    # resolves one literal citation -- has nothing to resolve.
     Guarantee(
         "fleet-recipe.registers-the-product-cluster-source",
         FLEET_RECIPE,
         "anchor_regex",
         {"patterns": (r"skills/product-\*/references/product-\*-principles\.md",)},
     ),
-    # --- the principles files themselves ----------------------------------
     Guarantee(
         "design-principles.section-spine",
         DESIGN_PRINCIPLES,
@@ -747,7 +618,6 @@ GUARANTEES: tuple[Guarantee, ...] = (
             )
         },
     ),
-    # --- the standalone review skills -------------------------------------
     Guarantee(
         "design-review-skill.cites-the-fleet-recipe",
         DESIGN_REVIEW_SKILL,
@@ -790,11 +660,6 @@ GUARANTEES: tuple[Guarantee, ...] = (
         "anchor_regex",
         {"patterns": (r"deep-plan:dp-critic",)},
     ),
-    # The third review skill gets no `cites-its-principles-file` row, and its
-    # absence is the point rather than an oversight: this skill composes the
-    # rubric path from the reviewed member's owning beat, so there is no one
-    # path to pin. That the composed paths resolve to shipped files is asserted
-    # by derivation in skills/product-review/tests/test_product_review_contract.py.
     Guarantee(
         "product-review-skill.cites-the-fleet-recipe",
         PRODUCT_REVIEW_SKILL,
@@ -813,14 +678,6 @@ GUARANTEES: tuple[Guarantee, ...] = (
         "frontmatter_field",
         {"field": "name", "contains": "product-review"},
     ),
-    # --- agents/dp-critic.md ----------------------------------------------
-    # The leaf reads its own cluster source. That is what shortened the chain
-    # from four hops (caller -> skill -> fragment -> quoted questions) to two,
-    # so if the `Read` instruction goes, the hops come back silently: the
-    # critic still receives quoted questions and still returns findings, just
-    # without the severity hints and definitions around them. Region-scoped to
-    # the cluster-source bullet, because the review-target bullet names `Read`
-    # too and an unscoped pattern would pass on the wrong sentence.
     Guarantee(
         "critic-agent.reads-its-own-cluster-source",
         CRITIC_AGENT,
@@ -830,7 +687,6 @@ GUARANTEES: tuple[Guarantee, ...] = (
             "patterns": (r"`Read`",),
         },
     ),
-    # --- agents/dp-implement-task.md --------------------------------------
     Guarantee(
         "implement-task-agent.cites-the-execute-time-run-rules",
         IMPLEMENT_TASK_AGENT,
@@ -867,7 +723,6 @@ GUARANTEES: tuple[Guarantee, ...] = (
         "anchor_regex",
         {"patterns": (r"fleet_mode", r"run_in_background: false")},
     ),
-    # --- the artifact templates -------------------------------------------
     Guarantee(
         "plan-template.names-every-folder-member",
         PLAN_TEMPLATE,
@@ -957,105 +812,6 @@ GUARANTEES: tuple[Guarantee, ...] = (
 )
 
 
-# --- Replacement map: probe 4's 71 wording assertions -> guarantee id -----
-#
-# Task 2 of the lean-skills plan deletes the assertion on each line below. The
-# id beside it is what now protects the behaviour, so the deletion is a lookup
-# rather than a judgement call. `file:line` refers to the pre-task-2 revision
-# (baseline 9f7a70d). Guarantees not listed here are additive: the frontmatter
-# `name`/`disable-model-invocation` entries and the per-launch-site
-# `path_exists` entries that no wording assertion ever covered.
-#
-# skills/deep-plan/tests/test_skill_contract.py (37)
-#   :50  -> deep-plan-skill.session-id-is-substituted
-#   :53  -> deep-plan-skill.no-literal-session-id-placeholder
-#   :56  -> deep-plan-skill.section-sequence
-#   :68  -> deep-plan-skill.no-depth-knob + phase-prompts.no-depth-knob
-#   :114 -> deep-plan-skill.no-retired-agent-types + phase-prompts.no-retired-agent-types
-#   :136 -> execute-skill.audits-task-scope-with-both-halves-of-the-diff
-#           (`## Step 6` half -> execute-skill.step-sequence)
-#   :158 -> execute-skill.states-the-session-subagent-cap-and-its-degradation
-#   :161 -> execute-skill.cites-the-fleet-recipe-as-the-caps-home
-#   :165 -> execute-skill.states-the-session-subagent-cap-and-its-degradation
-#   :180 -> execute-skill.step-sequence
-#   :188 -> execute-skill.step-sequence
-#   :206 -> deep-plan-skill.no-harness-plan-path-wiring
-#   :209 -> deep-plan-skill.r2-forbids-the-plan-mode-tools
-#   :212 -> deep-plan-skill.section-sequence
-#   :213 -> deep-plan-skill.session-id-is-substituted
-#   :226 -> deep-plan-skill.draft-is-born-as-a-folder
-#   :227 -> deep-plan-skill.no-flat-plan-naming
-#   :228 -> deep-plan-skill.draft-is-born-as-a-folder
-#   :239 -> deep-plan-skill.allowlists-the-rename-guard
-#   :245 -> deep-plan-skill.phase-44-seeds-design-md-from-its-template
-#   :246 -> deep-plan-skill.read-only-contract-names-its-writable-paths
-#   :251 -> deep-plan-skill.no-flat-plan-naming
-#   :252 -> deep-plan-skill.no-flat-plan-naming
-#   :281 -> deep-plan-skill.phase-5-handoff-names-the-conditional-architecture-member
-#           (the fragment's copy of the handoff literal is gone, not re-guarded:
-#            SKILL.md is now its only home)
-#   :348 -> execute-skill.resolves-the-plan-via-the-approval-memo
-#   :349 -> execute-skill.keeps-the-newest-mtime-fallback
-#   :354 -> execute-skill.carries-no-state-schema-knowledge
-#   :361 -> execute-skill.parses-the-plan-with-load-tasks
-#   :362 -> execute-skill.wires-dependencies-with-addblockedby
-#   :370 -> execute-skill.discovery-prefers-folder-plans-and-skips-non-plans
-#   :371 -> execute-skill.discovery-prefers-folder-plans-and-skips-non-plans
-#   :372 -> execute-skill.discovery-prefers-folder-plans-and-skips-non-plans
-#   :373 -> execute-skill.parses-the-plan-with-load-tasks
-#   :384 -> execute-skill.wires-dependencies-with-addblockedby
-#   :389 -> execute-skill.flips-the-plan-status-on-completion
-#   :390 -> execute-skill.refreshes-the-plans-index-on-completion
-#   :391 -> execute-skill.step-sequence  (the `## Step 6` heading states the scope)
-#
-# skills/design-review/tests/test_design_review_contract.py (15)
-#   :50  -> design-principles.section-spine
-#   :81  -> fleet-recipe.workflow-reads-the-critic-type-from-its-args
-#   :82  -> fleet-recipe.section-spine
-#   :84  -> fleet-recipe.finding-line-is-the-wire-contract
-#   :85  -> fleet-recipe.carries-a-probe-status-marker
-#   :93  -> fleet-recipe.workflow-reads-the-critic-type-from-its-args
-#   :97  -> fleet-recipe.pairs-the-tests-cluster-with-its-principles-file
-#   :108 -> fleet-recipe.section-spine
-#   :110 -> fleet-recipe.nested-fleets-launch-in-the-foreground
-#   :114 -> fleet-recipe.names-the-session-cap-env-var
-#   :138 -> design-review-skill.cites-the-fleet-recipe
-#           + design-review-skill.cites-its-principles-file
-#   :152 -> deep-plan-skill.phase-43-ends-on-the-deep-modules-lens
-#   :175 -> deep-plan-skill.no-retired-agent-types
-#   :187 -> deep-plan-skill.phase-2-cites-the-design-rubric
-#   :225 -> execute-skill.does-not-launch-critics-itself
-#
-# skills/deep-plan/tests/test_template_contract.py (8)
-#   :83  -> plan-template.change-block-is-a-summary-sentence-then-sub-bullets
-#   :85  -> plan-template.names-every-folder-member
-#   :88  -> plan-template.no-dotted-sibling-naming
-#   :89  -> plan-template.no-dotted-sibling-naming
-#   :104 -> plan-template.change-block-is-a-summary-sentence-then-sub-bullets
-#   :107 -> plan-template.names-every-folder-member
-#   :110 -> plan-template.cites-the-readability-authoring-rules
-#   :125 -> plan-template.no-retired-dossier-section-list
-#
-# skills/tdd-review/tests/test_test_principles_contract.py (4)
-#   :85  -> test-principles.section-spine
-#   :98  -> test-principles.carries-no-attribution-section
-#   :142 -> tdd-review-skill.cites-its-principles-file
-#           + tdd-review-skill.cites-the-fleet-recipe
-#           + tdd-review-skill.launches-the-critic-by-agent-type
-#   :162 -> perspectives.points-tests-authoring-at-the-tdd-rubric
-#
-# skills/deep-plan/tests/test_design_md_contract.py (3)
-#   :38  -> design-md-template.cites-the-readability-authoring-rules
-#   :42  -> design-md-template.states-the-anchor-slug-rule
-#   :46  -> design-md-template.no-retired-field-block-shape
-#
-# skills/deep-plan/tests/test_architecture_md_contract.py (3)
-#   :43  -> architecture-md-template.carries-a-diagram-fence
-#   :46  -> architecture-md-template.significance-test-carries-its-skip-list
-#   :50  -> architecture-md-template.seam-rule-leaves-rationale-in-design-md
-#
-# skills/deep-plan/tests/test_readability_contract.py (1)
-#   :49  -> readability-principles.section-spine
 
 
 class _RegionMissing(Exception):
@@ -1255,12 +1011,6 @@ def listing_entry(text: str) -> str | None:
     return " ".join(field for field in entry if field)
 
 
-# `description: |` leaves the block-scalar indicator on the key's own line, and
-# `_field_value` returns it along with the rest of the raw value. It is YAML
-# syntax rather than prose, so it comes off before anything measures the text;
-# counted, it would report every folded value as one word and one character
-# longer than it is. Matched at end-of-string as well as before whitespace, so
-# an *empty* block scalar reduces to `""` instead of measuring as one word.
 _BLOCK_SCALAR = re.compile(r"^[|>][+-]?\d*(?:\s|$)")
 
 

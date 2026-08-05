@@ -1,13 +1,3 @@
-"""Guards the plan-file template and a golden plan against finalize drift.
-
-If a future edit desyncs `plan-file-template.md` or the golden example from
-`finalize_plan.py`, these tests fail. This is the regression guard for the
-original bug (validator required a section the template never mentioned).
-
-Runnable two ways:
-    python3 skills/deep-plan/tests/test_template_contract.py
-    python3 -m pytest skills/deep-plan/tests/test_template_contract.py
-"""
 
 from __future__ import annotations
 
@@ -64,9 +54,6 @@ def test_template_wraps_the_task_overview_in_its_markers() -> None:
     text = TEMPLATE.read_text()
     skeleton = _extract_skeleton(text)
 
-    # Markers come from finalize_plan constants (never re-hardcoded here) and
-    # appear exactly once each, wrapping the Task overview heading between
-    # Architecture and Tasks in the skeleton.
     assert text.count(finalize.OVERVIEW_BEGIN) == 1
     assert text.count(finalize.OVERVIEW_END) == 1
     arch = skeleton.index("## Architecture")
@@ -80,12 +67,6 @@ def test_template_wraps_the_task_overview_in_its_markers() -> None:
 
 
 def _first_table_header_cells(text: str, source: str) -> list[str]:
-    """The cell labels of the first pipe-table row in `text`.
-
-    Cells are compared rather than the raw row so that re-spacing a column is
-    not the same event as dropping one -- the template's tables are hand-aligned
-    and every column widens whenever a neighbour is renamed.
-    """
     for line in text.splitlines():
         stripped = line.strip()
         if stripped.startswith("|"):
@@ -97,20 +78,14 @@ def test_template_declares_decisions_index_and_change_shape() -> None:
     text = TEMPLATE.read_text()
     skeleton = _extract_skeleton(text)
 
-    # The decisions table is an index: each row's Rationale cell points into
-    # the sibling design.md by anchor link instead of carrying the full story.
     assert "design.md#" in skeleton, (
         "skeleton decisions row must carry a design.md# anchor-link placeholder"
     )
 
-    # Probe entries explain themselves in four parts around the machine-stable
-    # [probe N] first line.
     assert "[probe 1]:" in skeleton, "probes appendix must keep the [probe N] grep anchor"
     for part in ("Why:", "If it had failed:"):
         assert part in skeleton, f"probes appendix skeleton missing the {part!r} line"
 
-    # The dossier appendix opens with the research coverage table, whose columns
-    # are what make an unresearched decision visible rather than merely absent.
     heading = "### Coverage"
     assert heading in skeleton, f"dossier appendix skeleton must open with {heading!r}"
     coverage = _first_table_header_cells(
@@ -124,8 +99,6 @@ def test_template_declares_decisions_index_and_change_shape() -> None:
         f"research coverage table must keep its not-researched column, got {coverage}"
     )
 
-    # The golden plan exercises the house style: an indexed decision row and a
-    # sub-bulleted Task 1 Change block.
     golden = GOLDEN.read_text()
     decisions = golden[golden.index("## Decisions made") : golden.index("## Architecture")]
     assert re.search(r"\]\(design\.md#[a-z0-9-]+\)", decisions), (
@@ -160,9 +133,6 @@ def test_template_and_golden_declare_full_tests_schema() -> None:
         ("template skeleton", _tests_block(skeleton, "template skeleton")),
         ("golden plan", _tests_block(golden, "golden plan")),
     ):
-        # Labels come from finalize_plan.TESTS_FIELDS (never re-typed here);
-        # bullet order must follow the tuple so the copies cannot silently
-        # reorder relative to the canonical schema.
         positions: list[int] = []
         for label in finalize.TESTS_FIELDS:
             m = re.search(rf"^[ \t]*-[ \t]*{re.escape(label)}:", block, re.MULTILINE)

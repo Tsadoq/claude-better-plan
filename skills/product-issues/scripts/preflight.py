@@ -1,44 +1,3 @@
-#!/usr/bin/env python3
-"""Every condition that should stop a batch, checked before the first call.
-
-Filing is the one thing this beat does that cannot be undone, and a batch is
-filed one issue at a time. That combination is what this module exists for: a
-condition noticed on the seventh slice has already put six issues into a tracker
-other people are looking at, with no way back except closing them by hand. So
-every question that can be asked without making a call is asked here, together,
-before anything is created.
-
-`check` therefore raises rather than reporting. A caller has exactly one decision
-to make -- file the batch or do not -- and a returned list of findings is a
-decision the caller could get wrong, whereas a raised refusal is one it cannot.
-Each check names *every* slice that fails it rather than the first, because the
-alternative is a fix-and-rerun loop that reveals the next offender one run at a
-time.
-
-What is checked, and why each one is worth a whole batch:
-
-- The unknown marker. A slice carrying it is a slice somebody has not finished
-  deciding. Filing the rest and skipping that one is the worst available outcome,
-  because the set then looks complete while the piece with the unestablished
-  acceptance condition is missing.
-- The two GitHub ceilings, 100 sub-issues under one parent and 8 levels of
-  nesting. Both are enforced by the server on the call that breaches them, which
-  means being discovered mid-batch.
-- A slice whose `roadmap_item` names nothing in roadmap.md. The whole chain's
-  claim is that every piece of work traces to something upstream, and a slice
-  that traces to an id nobody wrote is a slice that entered the set some other
-  way.
-
-The marker token itself is read from `artifact-family.md`, which publishes it, and
-is deliberately not spelled here: a second copy would keep matching after the
-published token moved on, and this check would then pass every document in the
-suite.
-
-Standard library only, like every script in this suite. This module holds no
-transport and takes none: what it knows about the tracker arrives as data the
-caller already read, which is what makes "nothing was called" a property of the
-code rather than a promise in a comment.
-"""
 
 from __future__ import annotations
 
@@ -50,54 +9,28 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# Siblings are reached the way every script in this suite reaches one: their
-# shared directory on the path, anchored on `__file__`. See gh_capability.py.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gh_capability import Capability  # noqa: E402
 from slice_file import Slice  # noqa: E402
 
-# Where the suite publishes the unknown-value marker. Two directories up from
-# `scripts/` is `skills/`, the same anchoring product_artifact.py uses to reach
-# the plugin root.
 ARTIFACT_FAMILY = (
     Path(__file__).resolve().parents[2] / "product-artifacts" / "references" / "artifact-family.md"
 )
 
-# The heading in that file whose fenced block is the marker's definition.
 MARKER_HEADING = "## Unknown marker"
 
-# GitHub's documented sub-issue limits: 100 children under one parent, and 8
-# levels of nesting. The error returned when either is breached is not
-# documented, which is the second reason to check rather than to attempt and
-# interpret -- there is no status code to branch on afterwards.
 MAX_SUB_ISSUES = 100
 MAX_NESTING_DEPTH = 8
 
-# What breaching either ceiling mid-batch would have left behind. One sentence
-# rather than a branch on `Capability`, because the links are a call of their
-# own after the create on every machine there is -- that decision and its
-# reasons are github_destination.py's "**Links go through the REST endpoints on
-# every path**". A refusal spends a sentence on this because an issue that
-# exists and is attached to nothing is what somebody would otherwise have to go
-# and find by hand.
 BREACH_COST = (
     "Links here are a call made after each create, so the first slice past it would have been filed "
     "and then left unattached"
 )
 
-# The id form every roadmap item carries. This is this code's copy of a
-# convention published in `skills/product-roadmap/references/rice-template.md`,
-# which is that convention's single home; a test pins the two together rather
-# than trusting them to stay in step. The marker below is read from its contract
-# at run time instead, which is the stronger treatment, and is only possible
-# because that contract publishes a literal token rather than a shape.
 ROADMAP_ITEM_FORM = "ITEM<n>"
 
-# `ROADMAP_ITEM_FORM` as something to find in a file: `ITEM1`, `ITEM12`. Bounded
-# at both ends so `ITEM1` does not match inside `ITEM12`.
 _ITEM_ID = re.compile(r"\bITEM\d+\b")
 
-# A fenced block's contents, opening fence to closing fence, both line-initial.
 _FENCED = re.compile(r"^```[^\n]*\n(.*?)^```", re.DOTALL | re.MULTILINE)
 
 
@@ -266,8 +199,6 @@ def _refuse_slices_without_upstream(slices: Sequence[Slice], roadmap: Path) -> N
             f"no slice can be traced upstream, because {roadmap} could not be read: {err}"
         ) from err
 
-    # `roadmap_item` is in `REQUIRED_KEYS`, so `read_slice` has already refused
-    # any slice that lacks it and this lookup cannot fail.
     unmoored = [
         f"{_named(one)} names {one.frontmatter['roadmap_item']}"
         for one in slices

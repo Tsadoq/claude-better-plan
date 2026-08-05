@@ -1,39 +1,3 @@
-#!/usr/bin/env python3
-"""Parse a finalized /deep-plan plan file into structured JSON.
-
-Used by the `/deep-plan:deep-plan-execute` companion skill to turn a plan's
-`## Tasks` block into a deterministic task list that can be loaded into the
-harness Task API (one `TaskCreate` per task, then `TaskUpdate addBlockedBy`
-to wire `Depends on`).
-
-Usage:
-    load_tasks.py --plan <path> [--task N]
-
-`--plan` accepts a plan file or a plan folder; a folder resolves to its
-`plan.md` member via finalize_plan.resolve_plan_path.
-
-`--task N` narrows the output to the single task numbered N, so a per-task
-implementer can fetch its own task body instead of having plan fields
-re-typed into its prompt. Output becomes `{ok, plan, task}`; an N with no
-matching task is an error, not an empty result.
-
-Output (stdout, JSON):
-    {
-      "tasks": [
-        {"n": 1, "subject": "...", "target_files": ["src/x.py (new)"],
-         "change": "...", "tests": "..."|null, "verification": "...",
-         "depends_on": [int, ...]},
-        ...
-      ],
-      "decisions": [{"n": "1", "decision": "...", "chosen": "...",
-                     "rejected": "...", "rationale": "..."}, ...],
-      "open_questions": "none"
-    }
-
-The shape mirrors the `## Tasks` subschema in
-`references/plan-file-template.md`. Section slicing reuses the helpers in
-`finalize_plan.py` rather than re-implementing them.
-"""
 
 from __future__ import annotations
 
@@ -46,7 +10,6 @@ from typing import Any
 
 from finalize_plan import _header_pos, _section_body, _section_end, resolve_plan_path
 
-# A task subsection label line, e.g. `**Change**:` or `**Depends on**: none`.
 _LABEL_RE = re.compile(r"^\*\*(?P<label>[^*]+)\*\*:[ \t]*(?P<inline>.*)$", re.MULTILINE)
 _TASK_HEADER_RE = re.compile(r"^### Task (\d+):[ \t]*(.*)$", re.MULTILINE)
 
@@ -99,7 +62,6 @@ def _parse_tasks(text: str) -> list[dict[str, Any]]:
     body = text[tasks_pos : _section_end(text, tasks_pos)]
 
     parts = re.split(r"(^### Task \d+:.*$)", body, flags=re.MULTILINE)
-    # parts = [preamble, header1, block1, header2, block2, ...]
     tasks: list[dict[str, Any]] = []
     for k in range(1, len(parts), 2):
         header = parts[k]
@@ -130,7 +92,6 @@ def _parse_decisions(text: str) -> list[dict[str, str]]:
         if not stripped.startswith("|"):
             continue
         cells = [c.strip() for c in stripped.strip("|").split("|")]
-        # Skip header (`# | Decision | ...`) and separator (`---|---`) rows.
         if not cells or cells[0] in ("#", "") or set("".join(cells)) <= set("-: "):
             continue
         if not cells[0].isdigit():
