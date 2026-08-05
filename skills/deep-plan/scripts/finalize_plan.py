@@ -1,32 +1,3 @@
-#!/usr/bin/env python3
-"""Checkpoint 2 auto-repair normalizer and Phase 5 archiver for /deep-plan.
-
-Two modes:
-
-1. Repair (run before the Checkpoint 2 approval gate):
-       finalize_plan.py --repair --plan <plan_path>
-   Reads the plan file, repairs it in place, and prints a JSON report
-   `{ok, fixes, warnings}`. Repair never loops: it normalizes em-dashes,
-   task headers, missing sections, and missing task subsections rather
-   than rejecting. `ok` is false only for genuinely unrecoverable input
-   (empty file, or no tasks at all).
-
-2. Archive (run after Checkpoint 2 approval):
-       finalize_plan.py --archive --plan <plans-dir>/<slug>/plan.md \
-         --plans-dir <dir> --slug <slug>
-   Repairs, stamps **Status**/**Date** under the H1 when absent, then
-   splits the appendix sections (`## Verification probes`,
-   `## Research dossiers`) into the folder members probes.md and
-   research.md and rewrites the lean plan at <plans-dir>/<slug>/plan.md.
-   Source and destination may be the same file; the plan text is fully
-   read before any write, so the in-place split is safe. Prints a JSON
-   report with the written paths.
-
-Every plan lives in its own folder plans_dir/<slug>/ with fixed member
-names (plan.md, research.md, probes.md, design.md). The draft is born as
-plans_dir/<topic>-draft/plan.md in Phase 2 and the folder is renamed to
-plans_dir/<slug>/ at Phase 4.2; there is no mirror copy.
-"""
 
 from __future__ import annotations
 
@@ -39,15 +10,9 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-# Plugin-root lib/ carries the marker convention shared with every artifact
-# family; see lib/artifact_common.py's module docstring for why this is a
-# sys.path bootstrap rather than a package import.
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
 import artifact_common  # noqa: E402
 
-# Plan-folder layout: every plan lives in plans_dir/<slug>/ with these
-# fixed member names. resolve_slug.py and load_tasks.py import them from
-# here so the layout has a single source of truth.
 PLAN_FILE_NAME = "plan.md"
 RESEARCH_FILE_NAME = "research.md"
 PROBES_FILE_NAME = "probes.md"
@@ -55,22 +20,12 @@ DESIGN_FILE_NAME = "design.md"
 ARCHITECTURE_FILE_NAME = "architecture.md"
 DRAFT_SUFFIX = "-draft"
 
-# Normative marker literals for generated regions. Content between a
-# begin/end pair is owned by this script and rewritten wholesale.
-#
-# The task-overview markers predate lib/artifact_common.py's `{name}-index`
-# naming convention (no "-index" infix) and are frozen into shipped golden
-# fixtures and the plan-file template, so they stay literal rather than
-# routing through `markers()` -- that would render a byte-different pair
-# and make every existing archived plan's overview region unrecognisable.
 OVERVIEW_BEGIN = "<!-- deep-plan-task-overview:begin generated: do not edit -->"
 OVERVIEW_END = "<!-- deep-plan-task-overview:end -->"
 _INDEX_MARKERS = artifact_common.markers("deep-plan")
 INDEX_BEGIN = _INDEX_MARKERS.begin
 INDEX_END = _INDEX_MARKERS.end
 
-# The authoritative status vocabulary for the `**Status**:` line in
-# plan.md and the plans_dir README index.
 STATUSES = ("draft", "approved", "executed", "legacy")
 
 REQUIRED_SECTIONS = [
@@ -82,12 +37,8 @@ REQUIRED_SECTIONS = [
     "## Open questions",
 ]
 
-# Sections whose emptiness is worth a warning (Architecture and Open
-# questions legitimately carry an `n/a` body, so they are excluded).
 WARN_IF_EMPTY = {"## Context", "## Decisions made", "## Tasks", "## References"}
 
-# Always-present task subsections. `**Tests (TDD)**` is intentionally NOT
-# here: it is required only for tasks that touch code (see CODE_EXTS).
 ALWAYS_TASK_SUBSECTIONS = [
     ("**Target files**", "n/a"),
     ("**Change**", "n/a"),
@@ -95,12 +46,6 @@ ALWAYS_TASK_SUBSECTIONS = [
     ("**Depends on**", "none"),
 ]
 
-# Canonical `**Tests (TDD)**` field labels, in normative order. Single source
-# of the schema: the template skeleton, the golden fixture, and the
-# perspective agent are pinned to this tuple by the contract tests. A code
-# task whose Tests block lacks a `- {field}:` bullet gets one warning per
-# missing field; repair never inserts field lines (warn only, like the
-# missing-block check below).
 TESTS_FIELDS = (
     "File", "Test name", "Behavior", "Level", "Real vs mocked",
     "Setup", "Seams", "Dedup", "Asserts",
@@ -126,9 +71,6 @@ ATTRIBUTION = [
 ]
 
 
-# --------------------------------------------------------------------------
-# Path helpers
-# --------------------------------------------------------------------------
 
 def resolve_plan_path(path: Path) -> Path:
     """Resolve a plan folder to its plan.md member; pass files through."""
@@ -137,9 +79,6 @@ def resolve_plan_path(path: Path) -> Path:
     return path
 
 
-# --------------------------------------------------------------------------
-# Section helpers
-# --------------------------------------------------------------------------
 
 def _header_pos(text: str, header: str) -> int:
     m = re.search(rf"^{re.escape(header)}[ \t]*$", text, re.MULTILINE)
@@ -156,15 +95,11 @@ def _section_body(text: str, header: str) -> str:
     if pos == -1:
         return ""
     end = _section_end(text, pos)
-    # drop the header line itself
     nl = text.find("\n", pos)
     body = text[(nl + 1 if nl != -1 else end) : end]
     return body.strip()
 
 
-# --------------------------------------------------------------------------
-# Repair steps
-# --------------------------------------------------------------------------
 
 def strip_attribution(text: str, fixes: list[str]) -> str:
     for pat in ATTRIBUTION:
@@ -266,7 +201,6 @@ def ensure_task_subsections(text: str, fixes: list[str], warnings: list[str]) ->
     head, body, tail = text[:tasks_pos], text[tasks_pos:tasks_end], text[tasks_end:]
 
     parts = re.split(r"(^### Task \d+:.*$)", body, flags=re.MULTILINE)
-    # parts = [preamble, header1, block1, header2, block2, ...]
     rebuilt = [parts[0]]
     for k in range(1, len(parts), 2):
         header = parts[k]
@@ -294,9 +228,6 @@ def ensure_task_subsections(text: str, fixes: list[str], warnings: list[str]) ->
     return head + new_body + tail
 
 
-# --------------------------------------------------------------------------
-# Task overview generation
-# --------------------------------------------------------------------------
 
 _TASK_LABEL_RE = re.compile(r"^\*\*(?P<label>[^*]+)\*\*:[ \t]*(?P<inline>.*)$", re.MULTILINE)
 
@@ -417,9 +348,6 @@ def upsert_task_overview(text: str, fixes: list[str]) -> str:
     return text
 
 
-# --------------------------------------------------------------------------
-# Public API
-# --------------------------------------------------------------------------
 
 def repair(text: str) -> tuple[str, dict[str, Any]]:
     """Repair a plan body. Returns (repaired_text, report)."""
@@ -463,10 +391,6 @@ def split_appendices(text: str) -> tuple[str, str | None, str | None]:
     return lean, probes, research
 
 
-# --------------------------------------------------------------------------
-# Readability warnings (never fixes: these two checks only ever add to the
-# report's warnings list and never touch the plan text)
-# --------------------------------------------------------------------------
 
 _H23_HEADING = re.compile(r"^(#{2,3}) (.+?)[ \t]*$", re.MULTILINE)
 _ANY_HEADING = re.compile(r"^#{1,6} (.+?)[ \t]*$", re.MULTILINE)
@@ -539,9 +463,6 @@ def _readability_warnings(plan_text: str, plan: Path) -> list[str]:
     return warnings
 
 
-# --------------------------------------------------------------------------
-# CLI
-# --------------------------------------------------------------------------
 
 def cmd_repair(plan: Path) -> dict[str, Any]:
     if not plan.exists():

@@ -1,9 +1,3 @@
-"""Component tests for product_artifact.py's --exists and --resolve-slug entry points.
-
-Runnable two ways:
-    python3 skills/product-artifacts/tests/test_product_artifact_queries.py
-    python3 -m pytest skills/product-artifacts/tests/test_product_artifact_queries.py
-"""
 
 from __future__ import annotations
 
@@ -45,10 +39,6 @@ def _run_main(argv: list[str]) -> tuple[dict[str, Any], int]:
 
 
 def _members_in_chain_order() -> list[str]:
-    """Parse the member filenames, in chain order, out of the ## Members
-    table's first column, so this expectation cannot drift from the
-    published contract independently of the MEMBERS tuple it is checked
-    against."""
     text = ARTIFACT_FAMILY.read_text()
     section = text.split("## Members", 1)[1].split("\n## ", 1)[0]
     return re.findall(r"^\|\s*`([a-z0-9-]+\.md)`\s*\|", section, re.MULTILINE)
@@ -58,7 +48,6 @@ def test_exists_reports_partial_chain_and_rejects_traversal_slug() -> None:
     members = _members_in_chain_order()
     assert members == list(product_artifact.MEMBERS)
 
-    # Partial chain: first two members written, last three absent.
     with tempfile.TemporaryDirectory() as d:
         product_dir = Path(d)
         folder = product_dir / "widget-export"
@@ -79,8 +68,6 @@ def test_exists_reports_partial_chain_and_rejects_traversal_slug() -> None:
         assert result["members"][members[3]] is False
         assert result["members"][members[4]] is False
 
-    # A traversal-shaped slug normalises to something safe: no slash or dot,
-    # and its resolved path never leaves product_dir.
     with tempfile.TemporaryDirectory() as d:
         product_dir = Path(d)
         result, code = _run_main(

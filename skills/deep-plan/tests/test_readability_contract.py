@@ -1,16 +1,3 @@
-"""Contract test: the shape of the readability red-flag cluster.
-
-skills/deep-plan/references/readability-principles.md is the single source of
-truth for narrative-artifact readability, and a critic is only useful if its
-cluster still carries checkable questions -- a count no substring pin can
-express. The file's H2 spine is pinned instead by tests/guarantees.py under
-`readability-principles.section-spine`. Stdlib only, so CI does not need
-pyyaml.
-
-Runnable two ways:
-    python3 skills/deep-plan/tests/test_readability_contract.py
-    python3 -m pytest skills/deep-plan/tests/test_readability_contract.py
-"""
 
 from __future__ import annotations
 
@@ -22,7 +9,6 @@ READABILITY = ROOT / "skills" / "deep-plan" / "references" / "readability-princi
 
 
 def _section(text: str, heading: str) -> str:
-    """Return the body of an H2 section (from its heading to the next H2)."""
     start = text.find(heading)
     if start == -1:
         return ""
@@ -31,7 +17,6 @@ def _section(text: str, heading: str) -> str:
 
 
 def _clusters(section: str) -> list[str]:
-    """Split an H2 section body into its H3 cluster bodies."""
     parts = section.split("\n### ")
     return ["### " + part for part in parts[1:]]
 

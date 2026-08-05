@@ -1,52 +1,3 @@
-#!/usr/bin/env python3
-"""A slice set turned into the ordered GitHub calls that create and link it.
-
-Filing a batch is not a loop over creates. Labels have to exist before an issue
-names one, a milestone has to be looked up before an issue can be filed against
-it, and a link can only be sent once the issue it points at exists. That
-ordering is this module's subject, and it is why the batch is one function
-rather than a set of steps a caller sequences: a caller that got the order wrong
-would find out from GitHub, halfway through a set of issues that cannot be
-un-filed.
-
-Every call goes through the `Transport` port, so the same code files, previews
-under `DryRunTransport`, and runs offline in the tests. Two consequences of that
-are worth stating because they are what keep the three paths honest:
-
-- Creating an issue is delegated to `transport.create_issue`, which hands back a
-  normalised `Filed`. Nothing here learns that `RestTransport` reads `id` and
-  `number` off the 201 while `GhTransport` parses the number out of the URL that
-  `gh issue create` prints and then fetches the id, `gh issue create` having no
-  `--json` flag. That is also the only paced call in the beat -- GitHub's
-  secondary limit caps content creation at 80 a minute -- which is why creates
-  are never spelled here as a `run`.
-- What a call is *spelled* as depends on `Capability`, not on which transport is
-  in hand. `ensure_labels` is the one place the two spellings differ, and it
-  reads the capability the caller detected, so a dry run describes the calls the
-  real path would make rather than the calls its own transport could make.
-
-**Links go through the REST endpoints on every path.** `gh` 2.94.0 added
-`--parent` and `--blocked-by` to `gh issue create`, which take issue numbers and
-so need no database id, and the plan intended those flags to replace the two
-linking calls on a new-enough CLI. They cannot be reached from here: the port's
-`create_issue` carries a title and a body and nothing else, so passing them
-would mean spelling `gh issue create` as an argv invocation in this module,
-which would duplicate that transport's URL-to-number-to-id normalisation and,
-worse, step around the create pacing that lives behind `create_issue`. The
-REST endpoints work identically on both paths -- `gh api` reaches them on a
-2.82.0 -- so the flags are an optimisation of two calls per issue, not a
-capability this beat would otherwise lack. Giving `create_issue` the links
-belongs to `issue_transport.py`.
-
-The two linking endpoints look alike and are not. Sub-issues take
-`{"sub_issue_id": <id>}` and dependencies take `{"issue_id": <id>}`; both mean
-the internal database id and neither means the issue number, while the issue in
-the URL path is always a number. Getting either wrong is silent -- GitHub
-ignores an unknown field -- which is why the two are separate named functions
-rather than one parameterised call.
-
-Standard library only, like every script in this suite.
-"""
 
 from __future__ import annotations
 
@@ -56,33 +7,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# Siblings are reached the way every script in this suite reaches one: their
-# shared directory on the path, anchored on `__file__`. See gh_capability.py.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gh_capability import Capability  # noqa: E402
 from issue_transport import CallFailed, Filed, Invocation, Transport  # noqa: E402
 from slice_file import Slice  # noqa: E402
 
-# The destination this module files to. It is also what composes the ledger key
-# in a slice's frontmatter, so a caller passes this to `Slice.filed` and to
-# `slice_file.write_filed_entry` rather than spelling `filed_github` anywhere.
 DESTINATION = "github"
 
-# GitHub's answer to creating something whose name is taken. For a label that is
-# the state this module wanted, so it is read as success rather than as failure.
 ALREADY_EXISTS = 422
 
-# One page of milestones is 30 by default and 100 at most. A repository with
-# more than this many is the one case where an existing milestone can go unseen
-# here; the create that follows then fails with GitHub's own already-exists
-# message, which is a stop rather than an issue filed against the wrong one.
 MILESTONE_PAGE = 100
 
-# The milestone number carried when the transport described the call instead of
-# making it, which is the dry run: it answers no body, so no number exists to
-# read. Negative for the same reason `DryRunTransport`'s placeholder issue
-# numbers are -- nothing real is ever numbered this way, so a placeholder that
-# reached a report is unmistakable there.
 UNRESOLVED_MILESTONE = -1
 
 
@@ -131,9 +66,6 @@ def ensure_labels(
                     summary=f"create the label {name!r} in {repo}",
                     method="POST",
                     url=f"repos/{repo}/labels",
-                    # Name only. Colour is what `--force` exists to update on
-                    # the other path, and inventing one here would repaint a
-                    # label somebody chose a colour for.
                     body={"name": name},
                 )
             )
@@ -284,9 +216,6 @@ def _file(
 
     attributes = _attributes(entry.labels, milestone)
     if attributes:
-        # A single edit rather than a call per attribute, and after the create
-        # rather than on it: the port's create carries a title and a body, and
-        # labels and milestones are the same call on both paths.
         transport.run(
             Invocation(
                 summary=f"set {' and '.join(attributes)} on {repo}#{filed.number}",

@@ -1,5 +1,3 @@
-# Quality gates for the deep-plan plugin: lint, type-check, then test.
-# Coexists with auto-bump.yml (which only handles versioning).
 
 name: ci
 
@@ -11,7 +9,6 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # Skip the auto-bump release commit; it only touches plugin.json.
     if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
     steps:
       - uses: actions/checkout@v4
@@ -20,21 +17,14 @@ jobs:
         with:
           python-version: "3.12"
 
-      # ruff and mypy are dev-only tools, not plugin runtime deps; pytest is the
-      # test runner (pinned to the major the suite is verified under locally);
-      # tiktoken feeds the token-budget contract test. The plugin scripts
-      # themselves are stdlib-only.
       - name: Install lint/type/test tools
         run: pip install ruff mypy "pytest>=9,<10" tiktoken
 
       - name: Lint (ruff)
         run: ruff check lib skills
 
-      # Discovery comes from pyproject.toml's [tool.mypy] files; no explicit
-      # path list here, the way testpaths already owns test discovery below.
       - name: Type-check (mypy --strict)
         run: mypy --strict
 
-      # Discovery comes from pyproject.toml's testpaths; no per-skill paths here.
       - name: Test (pytest)
         run: python -m pytest -v

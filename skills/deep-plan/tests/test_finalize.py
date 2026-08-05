@@ -1,9 +1,3 @@
-"""Tests for finalize_plan.py auto-repair and archive behavior.
-
-Runnable two ways:
-    python3 skills/deep-plan/tests/test_finalize.py     # stdlib, no deps
-    python3 -m pytest skills/deep-plan/tests/test_finalize.py
-"""
 
 from __future__ import annotations
 
@@ -86,9 +80,6 @@ def test_layout_constants_and_resolve_plan_path() -> None:
 
 
 def test_legacy_golden_repairs_clean() -> None:
-    # Companion to test_load_tasks.test_legacy_plan_parses_and_repairs_clean,
-    # kept here so this file's suite (the one every repair change runs) proves
-    # on its own that new warnings never fire on plans in the frozen v0.7 shape.
     _, report = finalize.repair(LEGACY.read_text())
     assert report["ok"] is True
     assert report["fixes"] == [], f"legacy plan must repair with zero fixes, got {report['fixes']}"
@@ -268,9 +259,6 @@ grep x docs/x.md
 def test_incomplete_tests_block_warns_per_missing_field() -> None:
     repaired, report = finalize.repair(TESTS_FIELDS_PLAN)
     warns = report["warnings"]
-    # Task 1's legacy block carries File, Test name, and Asserts; every other
-    # canonical field must warn. Derived from TESTS_FIELDS so the schema stays
-    # single-sourced in finalize_plan.py.
     missing_fields = tuple(f for f in finalize.TESTS_FIELDS if f not in ("File", "Test name", "Asserts"))
     assert len(missing_fields) == 6, "legacy block should be missing the six new fields"
     for field in missing_fields:
@@ -279,8 +267,6 @@ def test_incomplete_tests_block_warns_per_missing_field() -> None:
     assert not any("task 2" in w for w in warns), f"full nine-field block must not warn, got {warns}"
     assert not any("task 3" in w for w in warns), f"docs task must not get field warnings, got {warns}"
 
-    # Warn only, never insert: repair leaves the block untouched, so a second
-    # pass is byte-identical and still reports the same missing fields.
     again, report2 = finalize.repair(repaired)
     assert again == repaired, "field warnings must not mutate the plan text"
     for field in missing_fields:
@@ -294,9 +280,7 @@ def test_first_sentence_pep257_edge_cases() -> None:
     assert finalize.first_sentence(s) == (
         "Bumps the plugin to v0.5.0 and renames finalize_plan.py entry points."
     )
-    # No terminator anywhere: fall back to the first line.
     assert finalize.first_sentence("no terminator here\nsecond line") == "no terminator here"
-    # Pipes and internal newlines must render as one table-safe cell.
     piped = "matches the `a|b` alternation\nacross lines. Second."
     assert finalize.first_sentence(piped) == "matches the `a\\|b` alternation across lines."
 
@@ -311,13 +295,10 @@ def test_repair_upserts_task_overview() -> None:
     between = repaired[region_end : repaired.index("## Tasks")]
     assert between.strip() == "", "overview region must sit immediately before ## Tasks"
 
-    # Stale hand-edited content inside the markers is replaced wholesale.
     stale = repaired.replace("## Task overview", "## Task overview\n\nSTALE HAND EDIT", 1)
     re_repaired, _ = finalize.repair(stale)
     assert "STALE HAND EDIT" not in re_repaired
 
-    # A second repair pass is byte-identical, including for a sentence
-    # containing a pipe.
     piped_plan = CODE_VS_DOC.replace(
         "Edit docs.", "Handles the `a|b` regex\nacross lines. Edit docs."
     )
@@ -378,8 +359,6 @@ LINKED_DESIGN = (
 
 
 def test_readability_warnings_dangling_headers_and_index_links() -> None:
-    # Dangling headers: an empty section warns once by name; a parent heading
-    # whose body is its own subheadings does not.
     dangling = "## Empty section\n\n## Tasks\n\n### Task 1: x\n\nbody\n"
     warns = finalize.warn_dangling_headers(dangling)
     hits = [w for w in warns if "## Empty section" in w]
@@ -388,8 +367,6 @@ def test_readability_warnings_dangling_headers_and_index_links() -> None:
         f"parent '## Tasks' over its own '### Task 1:' must not count as dangling, got {warns}"
     )
 
-    # Index links: a punctuated question heading (dot and question mark)
-    # resolves via the slug rule; an unmatched anchor warns once by name.
     good_plan = LINKED_PLAN.replace("ANCHOR", "when-does-a-plan-deserve-an-architecturemd")
     assert finalize.warn_unresolved_decision_links(good_plan, LINKED_DESIGN) == [], (
         "a decisions-index link matching a slugified design.md heading must not warn"
@@ -400,8 +377,6 @@ def test_readability_warnings_dangling_headers_and_index_links() -> None:
         f"expected exactly one warning naming design.md#missing, got {bad}"
     )
 
-    # Sibling discovery: cmd_repair and cmd_archive both find design.md by
-    # path convention, warn without mutating, and a second pass agrees.
     with tempfile.TemporaryDirectory() as d:
         plans_dir = Path(d)
         folder = plans_dir / "linked-demo"
@@ -428,7 +403,6 @@ def test_readability_warnings_dangling_headers_and_index_links() -> None:
             "design.md#missing" in w for w in rep2["warnings"]
         ), "a second repair pass must stay byte-identical and re-report the warning"
 
-        # No sibling design.md: the link check turns off entirely.
         bare = plans_dir / "bare"
         bare.mkdir()
         (bare / "plan.md").write_text(normalized)
@@ -458,9 +432,6 @@ def test_archive_extracts_siblings() -> None:
 
 
 def test_archive_splits_in_place() -> None:
-    # Phase 5 calls cmd_archive with --plan pointing AT plans_dir/<slug>/plan.md:
-    # source equals destination. Pin that the in-place split stays safe
-    # (the plan text is fully read before any write).
     with tempfile.TemporaryDirectory() as d:
         plans_dir = Path(d)
         slug = "demo-plan"
@@ -514,7 +485,6 @@ def test_archive_writes_folder_members() -> None:
         date_line = re.search(r"^\*\*Date\*\*: \d{4}-\d{2}-\d{2}$", lean, re.MULTILINE)
         assert date_line, "Date stamp missing or malformed"
 
-        # A second (in-place) archive run preserves the stamped lines.
         result2 = finalize.cmd_archive(
             plan=folder / "plan.md", plans_dir=plans_dir, slug=slug
         )
@@ -534,15 +504,12 @@ def test_index_regeneration_is_deterministic() -> None:
         (plans_dir / "beta").mkdir()
         (plans_dir / "beta" / "plan.md").write_text("# Beta plan\n\n## Context\n\nx\n")
         (plans_dir / "legacy-plan.md").write_text("# Old flat plan\n\n## Context\n\nx\n")
-        # Dotted siblings and the README itself must never be listed.
         (plans_dir / "legacy-plan.probes.md").write_text("# probes\n")
         (plans_dir / "legacy-plan.research.md").write_text("# research\n")
 
         readme = finalize.regenerate_index(plans_dir)
         first = readme.read_text()
 
-        # A hand-written line outside the markers survives regeneration,
-        # and regeneration is byte-identical across consecutive runs.
         readme.write_text("Hand-written intro.\n\n" + first)
         finalize.regenerate_index(plans_dir)
         second = (plans_dir / "README.md").read_text()
@@ -561,9 +528,6 @@ def test_index_regeneration_is_deterministic() -> None:
 
 
 def test_index_region_is_byte_identical_and_built_from_shared_primitives() -> None:
-    # Companion to test_index_regeneration_is_deterministic (which owns
-    # repeat-run stability): this test owns the exact rendered bytes and the
-    # delegation to the shared lib/ primitives.
     with tempfile.TemporaryDirectory() as d:
         plans_dir = Path(d)
         (plans_dir / "alpha").mkdir()
@@ -593,12 +557,6 @@ def test_index_region_is_byte_identical_and_built_from_shared_primitives() -> No
         )
         assert region.splitlines() == golden.splitlines()
 
-        # Not a re-derivation from the same rows (that would pass even if
-        # regenerate_index stopped calling the shared lib and inlined
-        # today's bytes): this checks the marker pair finalize_plan.py
-        # actually spliced on -- the region's own begin/end lines -- against
-        # a fresh, independent call to artifact_common.markers("deep-plan"),
-        # and against the module constants that call is supposed to define.
         shared_markers = finalize.artifact_common.markers("deep-plan")
         region_lines = region.splitlines()
         assert region_lines[0] == shared_markers.begin

@@ -1,55 +1,3 @@
-#!/usr/bin/env python3
-"""Stage 2 as one command: read the slices stage 1 wrote, and file them.
-
-Usage:
-    file_issues.py --slug <slug> --product-dir <dir> --destination markdown
-    file_issues.py --slug <slug> --product-dir <dir> --destination github
-                   --repo <owner/name> [--parent <n>] [--file]
-
-Every other module in this beat does one thing to one subject: parse a slice,
-detect a `gh`, spell a call, refuse a batch. None of them decides whether
-anything happens. That decision is this module's whole subject, and it is made
-in three places:
-
-**Nothing is filed unless `--file` is passed.** Without it the run builds a
-`DryRunTransport`, walks the identical sequence, prints what it would have sent,
-and writes no ledger entry -- because the issue numbers that transport hands
-back are placeholders, and a slice recording one would tell the next run that a
-create nobody made had succeeded. `record_nothing` and `record_in_slice` are the
-pair that expresses this: the transport decides whether a call goes out, and the
-recorder decides whether a file is written, and neither of them is a flag read
-somewhere below.
-
-"No call" means no call to GitHub. The run still asks the local `gh` what
-version it is and which flags it takes, because the sequence a dry run describes
-is only the sequence filing would send if it knows which of the two spellings
-that `gh` accepts, and a preview of the other path is exactly the drift the
-transport port exists to prevent. Asking a binary on this machine to identify
-itself reaches no network and touches nobody's repository.
-
-**`--destination markdown` returns before a transport exists.** Stage 1 already
-wrote the slice files, so this destination has nothing left to do and reports
-what is there. Reaching for a tracker to answer it would make markdown a fourth
-adapter rather than the substrate the tracker destinations are built on.
-
-**A slice already carrying a `filed_github` entry is skipped and counted.** That
-is what makes a second run file the remainder rather than a duplicate set. The
-adapter refuses such a slice outright, which is the guard behind this one; the
-count is what tells a reader that a short run was a resumed run.
-
-JSON on stdout, like every script in this suite, and exactly one object of it.
-The dry run's description of the sequence therefore goes to stderr, so a caller
-can pipe stdout to a parser while a person reads the sequence.
-
-One reading this module owns and no sibling can. `preflight.Parent` is a value
-somebody read, because pre-flight holds no transport; this is where it is read,
-every page of the sub-issues list and a walk up `parent_issue_url` for the
-depth. A dry run cannot read it -- reading is a call -- so it reports the
-ceilings as unread rather than passing a fabricated parent that would refuse
-nothing while looking like a check.
-
-Standard library only, like every script in this suite.
-"""
 
 from __future__ import annotations
 
@@ -60,8 +8,6 @@ from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
-# Siblings are reached the way every script in this suite reaches one: their
-# shared directory on the path, anchored on `__file__`. See gh_capability.py.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import gh_capability  # noqa: E402
 import github_destination  # noqa: E402
@@ -78,38 +24,19 @@ from issue_transport import (  # noqa: E402
     TransportError,
 )
 
-# The two answers `--destination` takes. `GITHUB` is the adapter's own name for
-# itself, which is also what composes the ledger key, so the word a user types
-# and the key a run writes are one fact rather than two that can drift.
 MARKDOWN = "markdown"
 GITHUB = github_destination.DESTINATION
 DESTINATIONS: tuple[str, ...] = (MARKDOWN, GITHUB)
 
-# Stage 1's output folder and the chain member every slice traces back to, both
-# under `<product-dir>/<slug>/`. Spelled here rather than imported from
-# `product-artifacts`, whose `artifact-family.md` publishes the chain: reaching
-# into another skill's scripts would be this suite's first cross-skill code
-# import, for two path segments.
 ISSUES_DIRNAME = "issues"
 ROADMAP = "roadmap.md"
 
-# The remote consulted when the REST path has to work out which GitHub this is.
 DEFAULT_REMOTE = "origin"
 
-# One page of the sub-issues list, at the largest page GitHub's list endpoints
-# will return. Asking for fewer would only mean more round trips: the ceiling
-# this count feeds is `preflight.MAX_SUB_ISSUES`, which is under a page, so a
-# parent within the limit is answered in one call.
 SUB_ISSUE_PAGE = 100
 
-# Where paging stops regardless. By then the count is many times
-# `preflight.MAX_SUB_ISSUES` and the batch will be refused whatever the exact
-# number is, so the bound costs no decision and is what keeps a list endpoint
-# that never shortens from looping forever.
 MAX_SUB_ISSUE_PAGES = 10
 
-# What the report says about GitHub's two sub-issue ceilings, which are the one
-# thing here that cannot be checked without reading live state.
 CEILINGS_CHECKED = "checked against the parent's current children and depth"
 CEILINGS_NO_PARENT = "not applicable: this batch is filed at the top level, under no parent"
 CEILINGS_UNREAD = (
@@ -117,16 +44,8 @@ CEILINGS_UNREAD = (
     "unknown here. Pass --file to have them read before anything is created"
 )
 
-# The parent passed to pre-flight when nothing was read about one, which is both
-# the top-level case and the dry run. Neither ceiling can be breached against it,
-# and that is the point: `preflight.check` takes a `Parent` whether or not one
-# was read, so a run that read nothing passes a value that visibly refuses
-# nothing and says so in `ceilings`, rather than one that looks like a reading.
 UNREAD_PARENT = preflight.Parent(number=0, children=0, depth=0)
 
-# What a recorder hands back: the ledger entry it wrote, or None when it wrote
-# none. `filed` in the report counts these, so a run that created nothing counts
-# nothing without anybody consulting a flag.
 Recorder = Callable[[slice_file.Slice, Filed], "dict[str, Any] | None"]
 
 
@@ -262,8 +181,6 @@ def _sub_issues(transport: Transport, repo: str, number: int) -> list[Any]:
                 url=f"repos/{repo}/issues/{number}/sub_issues?per_page={SUB_ISSUE_PAGE}&page={page}",
             )
         ).json
-        # A transport that describes rather than performs answers no body, and
-        # knows nothing about the repository, so it reports no children.
         if not isinstance(answered, list):
             break
         found.extend(answered)
@@ -390,8 +307,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--slug", required=True)
     parser.add_argument("--product-dir", required=True)
     parser.add_argument("--destination", required=True, choices=DESTINATIONS)
-    # Meaningful only to --destination github, so it is checked there rather
-    # than here: a markdown run must not be asked for a repository it never uses.
     parser.add_argument("--repo", help="owner/name of the repository to file into")
     parser.add_argument("--parent", type=int, help="issue number to file this batch under")
     parser.add_argument(
@@ -420,9 +335,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args.repo:
         return _fail(report, "--repo is required for --destination github, as owner/name")
 
-    # One `gh` for the whole run: it identifies the local install, it is the
-    # filing transport when there is a usable one, and its create pacing is per
-    # instance, so a second one would pace nothing.
     shell = GhTransport()
     capability = gh_capability.detect(shell)
 
@@ -435,8 +347,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             "parent": args.parent,
             "dry_run": not args.file,
             "gh": _reported(capability),
-            # Null until the run has got as far as deciding it, which is what a
-            # failure before that leaves behind.
             "ceilings": None,
             "skipped": len(slices) - len(to_file),
             "planned": len(to_file),
@@ -446,8 +356,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         }
     )
 
-    # Built before the parent is read, because on a dry run it is what makes
-    # that read impossible: describing a call is not making one.
     preview = None if args.file else DryRunTransport(stream=sys.stderr)
     failure: str | None = None
     try:

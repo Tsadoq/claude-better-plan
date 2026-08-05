@@ -1,32 +1,3 @@
-"""Unit tests for preflight.py: the checks that stop a batch before any call.
-
-Every refusal here exists because of what the alternative leaves behind. Filing
-is irreversible and a batch is filed one issue at a time, so a condition noticed
-halfway through has already put an unknown subset of the slices into a tracker
-other people are looking at. These tests therefore assert two things together:
-that the refusal is raised, and that nothing moved -- no invocation was made and
-no slice file was touched.
-
-Nothing is mocked that the module owns. The slices are real files under
-`tmp_path` read by the real `slice_file.read_slice`, the parent's child count is
-read from `fixtures/sub_issues_empty.json` and `fixtures/sub_issues_populated.json`
-exactly as they came back from `gh api .../sub_issues`, and the `Capability` is
-produced by the real `gh_capability.detect` against the captured 2.82.0 help. The
-only double is the `gh` behind that detection, which is a fake for the reason
-test_gh_capability.py gives: reading the real one would make the suite report
-whatever this machine happens to have installed.
-
-`MARKER_PREFIX` is pinned here as a literal and nowhere in production. That is
-the shape the suite's other contract tests use: `artifact-family.md` publishes
-the token, production reads it from there, and one assertion in this file pins
-what production read against what a human can see in the contract. Without the
-pin, a reader that returned an empty string would make every marker check vacuous
-while every test still passed.
-
-Runnable two ways:
-    python3 -m pytest skills/product-issues/tests/test_preflight.py
-    uv run --no-project pytest skills/product-issues/tests/test_preflight.py
-"""
 
 from __future__ import annotations
 
@@ -42,8 +13,6 @@ HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent / "scripts"
 FIXTURES = HERE / "fixtures"
 
-# The published home of the `ITEM<n>` id convention that roadmap.md follows and
-# that preflight.py holds a matcher for.
 RICE_TEMPLATE = HERE.parents[1] / "product-roadmap" / "references" / "rice-template.md"
 
 
@@ -51,10 +20,6 @@ def _load(name: str) -> Any:
     spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
-    # Registered before execution, and the siblings loaded before their
-    # importers, for the reason test_gh_capability.py's `_load` sets out: string
-    # annotations are resolved through `sys.modules[cls.__module__]`, and an
-    # unregistered module makes that lookup return None mid-decoration.
     sys.modules[name] = mod
     spec.loader.exec_module(mod)
     return mod
@@ -68,38 +33,18 @@ preflight = _load("preflight")
 CAPTURED_VERSION = (FIXTURES / "gh_version.txt").read_text(encoding="utf-8")
 CAPTURED_HELP = (FIXTURES / "gh_issue_create_help.txt").read_text(encoding="utf-8")
 
-# `gh api repos/o/r/issues/25/sub_issues` for a parent with no children, and
-# `.../issues/14/sub_issues` for one with some. Both are the endpoint's list
-# body, which is what a child count must be taken from.
 NO_CHILDREN = json.loads((FIXTURES / "sub_issues_empty.json").read_text(encoding="utf-8"))
 ELEVEN_CHILDREN = json.loads((FIXTURES / "sub_issues_populated.json").read_text(encoding="utf-8"))
 
-# The unknown-value marker as `artifact-family.md`'s `## Unknown marker` block
-# publishes it, up to and including the colon. Only the first test asserts this
-# equals what production read; everywhere else the marker is written through
-# production's reader so a rename of the token needs one edit here and none in
-# the tests that merely need a slice carrying it.
 MARKER_PREFIX = "[UNKNOWN:"
 
-# A marker as a slice would really carry one: the token plus the two mandatory
-# payload fields the contract requires.
 MARKER = f"{MARKER_PREFIX} the acceptance threshold -- the support lead]"
 
-# The parent a batch is filed under: issue 25, top of its own tree. Depth counts
-# the parent's own level, so a top-level issue is 1.
 PARENT_NUMBER = 25
 TOP_LEVEL = 1
 
 
 class _RecordingGh:
-    """A `gh` that answers what `detect` asks and remembers every argv it saw.
-
-    The record is the point. `check` is handed no transport at all, so the
-    assertion that its argv list is unchanged across the call is what pins that
-    property in place: a later revision that threads a transport into pre-flight
-    and reads the tracker before refusing would fail here rather than quietly
-    turning a refusal into a call.
-    """
 
     def __init__(self) -> None:
         self.argvs: list[tuple[str, ...]] = []
@@ -126,7 +71,6 @@ def _write_slice(
     roadmap_item: str = "ITEM1",
     body: str = "## Acceptance criteria\n\n- the roster shows one cohort\n",
 ) -> Any:
-    """One real slice file on disk, read back through the real reader."""
     path = folder / filename
     path.write_text(
         "---\n"
@@ -143,7 +87,6 @@ def _write_slice(
 
 
 def _write_roadmap(folder: Path, *items: str) -> Path:
-    """A roadmap.md naming `items`, in the shape rice-template.md publishes."""
     row = "| `{item}` | `do the thing` | `REQ1` | 12 | 2 | 80% | 1 | 19.2 | 2 weeks |\n"
     rows = "".join(row.format(item=item) for item in items)
     path = folder / "roadmap.md"
@@ -157,13 +100,6 @@ def _write_roadmap(folder: Path, *items: str) -> Path:
 
 
 def _three_slices(folder: Path, *, marked: str | None = None, in_title: bool = False) -> list[Any]:
-    """Three slices, of which the second carries `marked` when one is given --
-    in its body, or in a frontmatter value when `in_title`.
-
-    Which of the three is the marked one is never asserted from these literals:
-    every test reads the slice it expects to be named out of the returned list,
-    so the test can be read without this helper in front of you.
-    """
     second: dict[str, str] = {}
     if marked is not None and in_title:
         second["title"] = f"Narrow the roster to {marked}"
@@ -262,7 +198,6 @@ def test_slice_naming_an_item_absent_from_the_roadmap_refuses_the_batch(tmp_path
     first, unmoored, last = slices
     capability = gh_capability.detect(_RecordingGh())
     parent = preflight.Parent.from_sub_issues(PARENT_NUMBER, NO_CHILDREN, depth=TOP_LEVEL)
-    # Every item the three slices name except the second's.
     roadmap = _write_roadmap(tmp_path, first.frontmatter["roadmap_item"], last.frontmatter["roadmap_item"])
 
     with pytest.raises(preflight.SliceWithoutUpstream) as refused:
@@ -285,9 +220,6 @@ def test_the_item_id_form_matched_here_is_the_one_the_roadmap_template_publishes
         "and would call every slice in every batch unmoored"
     )
 
-    # An id in some other shape is not an item id, however plainly the roadmap
-    # states it: the check is membership of the published form, not a substring
-    # search, and this is what tells the two apart.
     other_shape = "TASK1"
     slices = [_write_slice(tmp_path, "01-list-the-roster.md", slice_id="SLICE-01", roadmap_item=other_shape)]
     roadmap = tmp_path / "roadmap.md"
@@ -327,11 +259,6 @@ def test_a_marker_that_cannot_be_read_refuses_rather_than_matching_nothing(tmp_p
         preflight.unknown_marker_prefix(hollow)
 
 
-# The two `gh` a machine can have, told apart by the linking flags 2.94.0 added
-# to `gh issue create`. Both are values the real `detect` produces --
-# test_gh_capability.py builds each from a help text -- and neither of them
-# links on the create: `github_destination.py` sends the links to the REST
-# endpoints whichever one is in hand.
 ADVERTISES_LINK_FLAGS = gh_capability.Capability(usable=True, version=(2, 94, 0), supports_link_flags=True)
 ADVERTISES_NEITHER = gh_capability.Capability(usable=True, version=(2, 82, 0), supports_link_flags=False)
 
@@ -347,15 +274,6 @@ ADVERTISES_NEITHER = gh_capability.Capability(usable=True, version=(2, 82, 0), s
 def test_a_ceiling_refusal_says_a_breach_would_have_left_an_issue_filed_and_unattached(
     tmp_path: Path, parent: Any, refusal: type[Exception]
 ) -> None:
-    """What a ceiling refusal says a breach would have cost, on both kinds of `gh`.
-
-    Every path sends the links to the REST endpoints after the create, so a
-    ceiling breached mid-batch leaves an issue that exists and hangs off nothing
-    -- and it costs that on every machine, which is why the two `gh` have to be
-    told the same thing. A refusal that promised one of them the create itself
-    would be refused sends somebody looking for damage that is not there while
-    the real damage sits in their tracker.
-    """
     slices = _three_slices(tmp_path)
     roadmap = _write_roadmap(tmp_path, "ITEM1", "ITEM2", "ITEM3")
 

@@ -1,15 +1,3 @@
-"""Guards the architecture.md reference template's required shape.
-
-architecture.md is the conditional plan-folder member for architecturally
-significant plans. This test pins the template's two-section spine and the
-layout constant finalize_plan.py writes it by; what the template must *say*
-(its diagram fence, significance skip-list and seam rule) is pinned by
-tests/guarantees.py under the `architecture-md-template.*` ids.
-
-Runnable two ways:
-    python3 skills/deep-plan/tests/test_architecture_md_contract.py
-    python3 -m pytest skills/deep-plan/tests/test_architecture_md_contract.py
-"""
 
 from __future__ import annotations
 

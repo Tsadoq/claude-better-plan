@@ -1,16 +1,3 @@
-"""Contract test: the design-review guideline's shape and its fleet wiring.
-
-Pins what a substring cannot express about
-skills/design-review/references/design-principles.md and its callers: the
-red-flag cluster count a critic is split along, the consumer registry that
-keeps this test findable, and which critic type each Phase 4.6 site launches.
-The guideline's H2 spine and every path citation are pinned instead by
-tests/guarantees.py. Stdlib only, so CI does not need pyyaml.
-
-Runnable two ways:
-    python3 skills/design-review/tests/test_design_review_contract.py
-    python3 -m pytest skills/design-review/tests/test_design_review_contract.py
-"""
 
 from __future__ import annotations
 
@@ -27,7 +14,6 @@ PHASE_PROMPTS = ROOT / "skills" / "deep-plan" / "references" / "phase-prompts.md
 
 
 def _section(text: str, heading: str) -> str:
-    """Return the body of an H2 section (from its heading to the next H2)."""
     start = text.find(heading)
     if start == -1:
         return ""
@@ -65,12 +51,6 @@ def test_registry_names_colocated_pinning_test() -> None:
 
 
 def test_fleet_recipe_is_cluster_source_parametric() -> None:
-    # There is one critic type now, so the recipe's parametricity has moved from
-    # the agent to the cluster source: `args.source` is what makes an identical
-    # leaf hunt design flaws on one run and test flaws on the next. guarantees.py
-    # pins that all four principles files are paired here; what this adds is that
-    # the source actually reaches the finder, rather than being documented above
-    # a script that drops it.
     assert FLEET_ORCHESTRATION.exists(), f"missing fleet spec: {FLEET_ORCHESTRATION}"
     recipe = FLEET_ORCHESTRATION.read_text()
     assert "args.source" in recipe, (
@@ -80,8 +60,6 @@ def test_fleet_recipe_is_cluster_source_parametric() -> None:
 
 
 def test_no_caller_restates_the_session_cap() -> None:
-    # Fleet mechanics live in one file. Callers state a target and quote the
-    # recipe; they never restate a cap, a gate, or a nesting rule themselves.
     for path in (DEEP_PLAN_SKILL, PHASE_PROMPTS):
         assert "CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION" not in path.read_text(), (
             f"{path.name} restates the session cap; it belongs only in fleet-orchestration.md"
@@ -110,8 +88,6 @@ def test_deep_modules_perspective_wiring() -> None:
 
 
 def test_synthesis_lenses_run_in_the_orchestrator_turn() -> None:
-    # 4.3 sweeps the lenses inside the synthesis turn. No agent launch, so no
-    # barrier and no per-lens draft to merge.
     skill = DEEP_PLAN_SKILL.read_text()
     start = skill.find("### 4.3")
     end = skill.find("### 4.4")
@@ -152,9 +128,6 @@ def test_phase46_design_fleet_wiring() -> None:
 
 
 def test_execute_post_task_review_wiring() -> None:
-    # The post-task fleet moved into the implementer agent, so the diff and the
-    # critic prompts stay in the context that gets discarded. guarantees.py pins
-    # that the dispatcher names no critic at all.
     agent = (ROOT / "agents" / "dp-implement-task.md").read_text()
     for needle in ("deep-plan:dp-critic", "design-principles.md", "test-principles.md"):
         assert needle in agent, f"dp-implement-task.md must reference {needle!r}"

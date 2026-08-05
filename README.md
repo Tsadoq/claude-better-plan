@@ -103,10 +103,10 @@ CI pins `pytest>=9,<10` (the major the suite is verified under) and installs `ti
 
 ## Authoring budgets
 
-"The repo is big" and "the plugin is expensive" are different claims. Most of this tree never enters a model's context, and what does is paid for on one of three schedules: a frontmatter `description` is **always resident** (every turn of every session, used or not), a `SKILL.md` body loads **on invoke** and again on every re-attach, and anything under `references/` costs nothing until a turn actually **reads** it. So the cheapest place for a new paragraph is a reference file and the most expensive is a `description`, and moving prose *into* a `SKILL.md` to save a file hop makes it cost more, not less. `PLAN.md`'s `## Authoring budgets` has the full model and what it has already decided.
+"The repo is big" and "the plugin is expensive" are different claims. Most of this tree never enters a model's context. Frontmatter descriptions are always resident, a `SKILL.md` loads when invoked and re-attached, and `references/` content costs nothing until read.
 
-Those limits are enforced, and `BUDGETS` in `tests/guarantees.py` is their only home: every number lives there with the reason for it beside it, and no assertion hard-codes a size of its own. Budgeted today are the two per-description limits, the token ceiling on `skills/deep-plan/SKILL.md`, a token ratchet on `references/phase-prompts.md`, and a line ceiling on `references/fleet-orchestration.md`. When one fails, either move the bytes to a cheaper tier or raise the entry and record what earned the space -- never by dropping a behaviour `GUARANTEES` names. Nothing under `skills/deep-plan/scripts/`, the contract tests, `PLAN.md`, or `docs/plans/` is budgeted, because none of it is ever loaded as context.
+The limits live in `BUDGETS` in `tests/guarantees.py`; no assertion hard-codes its own size. A budget never justifies dropping a behavior named by `GUARANTEES`.
 
 ## See also
 
-- `PLAN.md`: the full design rationale, phase-by-phase semantics, and version history.
+- `PLAN.md`: current design rationale and phase-by-phase semantics.

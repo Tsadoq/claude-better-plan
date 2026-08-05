@@ -1,33 +1,3 @@
-#!/usr/bin/env python3
-"""Phase 0 bootstrap, state mutation, and project lookup for /deep-plan.
-
-Three modes:
-
-1. Bootstrap (initial call, default when --update and --lookup are absent):
-       setup_session.py --session-id <ID>
-   Resolves project root via `git rev-parse --show-toplevel` (falls back to
-   cwd with `no_git=true` sentinel), reads
-   $XDG_STATE_HOME/deep-plan/projects.json (default
-   ~/.local/state/deep-plan/projects.json) to find the project's plans_dir
-   (returns `prompt_for_plans_dir=true` sentinel and four candidate options
-   if first time), writes the per-session state file, and creates the
-   /tmp/deep-plan-<session_id>/ sandbox.
-
-2. Update (subsequent calls):
-       setup_session.py --update key=value --session-id <ID>
-   Mutates the state file in place. Permitted keys: plans_dir, plan_path,
-   last_plan_path.
-
-3. Lookup (read-only; --session-id not required):
-       setup_session.py --lookup
-   Resolves the project root itself and prints
-   {ok, project_root, plans_dir, last_plan_path}. last_plan_path is null
-   unless the memoized plan file still exists and carries a
-   `**Status**: approved` line, so a stale memo resolves to null rather
-   than an error.
-
-All modes print a JSON blob to stdout describing the resulting state.
-"""
 
 from __future__ import annotations
 
@@ -71,13 +41,8 @@ PERMITTED_UPDATE_KEYS = {
     "last_plan_path",
 }
 
-# Keys that outlive the session: mirrored into the project's durable record
-# so later sessions (and --lookup) can read them back.
 PROJECT_DURABLE_KEYS = ("plans_dir", "last_plan_path")
 
-# The plan-file line that marks a plan as approved. It is part of the plan
-# template's contract: /deep-plan writes it at Phase 5 approval and
-# /deep-plan-execute flips it to executed when done.
 APPROVED_STATUS_LINE = "**Status**: approved"
 
 

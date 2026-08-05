@@ -1,25 +1,3 @@
-"""Contract test: every dp-* subagent is read-only via `disallowedTools`.
-
-The deep-plan subagents inherit ambient tools (including any MCP documentation
-tools the user has) so they must NOT carry a `tools:` allowlist (an allowlist
-strips MCP access). Instead each agent declares a `disallowedTools:` list that
-blocks the write tools. Research agents additionally block `Bash` so they have
-no shell write vector at all. Plugin-bundled agents may not set
-`permissionMode`, `hooks`, or `mcpServers` (the harness ignores them), so the
-agents must not declare those fields either.
-
-The exception is the critic leaf: because one `dp-critic` now serves four
-cluster sources, its *exact* profile -- one agent file, `model: haiku`, and a
-denial set that is neither wider nor narrower than the three merged
-predecessors shared -- is pinned by
-`test_exactly_one_critic_agent_with_the_shared_profile` in
-`tests/test_guarantees.py`. The checks below stay general, and every agent
-including the critic passes through them.
-
-Runnable two ways:
-    python3 skills/deep-plan/tests/test_agents_contract.py
-    python3 -m pytest skills/deep-plan/tests/test_agents_contract.py
-"""
 
 from __future__ import annotations
 
@@ -29,15 +7,8 @@ from pathlib import Path
 AGENTS_DIR = Path(__file__).resolve().parents[3] / "agents"
 DEEP_PLAN = Path(__file__).resolve().parents[1]  # skills/deep-plan
 
-# The one agent that may write. It implements a plan task in a fresh context,
-# so blocking the write tools would defeat its purpose; its bound is the
-# dispatcher's scope audit plus the `Workflow` denial, not a tool block.
 WRITABLE = {"dp-implement-task"}
 
-# Research agents and the critic fleet leaf have no legitimate need for
-# Bash, so they block it outright and become genuinely write-free.
-# `dp-explore-codebase` keeps it for read-only inspection, and the writable
-# implementer needs it to run the task's verification command.
 BASH_FREE = {
     "dp-research-shallow",
     "dp-research-deep",
@@ -102,9 +73,6 @@ def test_every_agent_blocks_write_tools() -> None:
 
 
 def test_implement_task_is_the_only_writable_agent() -> None:
-    # Exactly one agent may write, and the exemption lives here as a test
-    # constant rather than as a marker inside the agent file, so adding a
-    # writable agent is a deliberate edit to this contract.
     files = _agent_files()
     assert files, f"no dp-*.md agents found under {AGENTS_DIR}"
 
@@ -146,20 +114,14 @@ def test_implement_task_is_the_only_writable_agent() -> None:
 
 
 def test_no_dangling_agent_references() -> None:
-    # A shipped document naming an agent the plugin does not ship is a broken
-    # promise to the reader and, for a skill, a launch that fails at runtime.
     root = AGENTS_DIR.parent
     docs = sorted((root / "skills").rglob("*.md"))
     docs += sorted(AGENTS_DIR.glob("*.md"))
     docs += [root / "README.md", root / "PLAN.md"]
 
-    # The golden fixtures freeze superseded plans verbatim; they are test data,
-    # not claims about the current tree.
     docs = [p for p in docs if "golden" not in p.parts]
     assert docs, "found no shipped documents to scan"
 
-    # `dp-` needs at least one alnum after the hyphen, so glob forms such as
-    # `dp-*` are not matched as names.
     pattern = re.compile(r"\bdp-[a-z0-9]+(?:-[a-z0-9]+)*")
 
     dangling: list[str] = []
@@ -173,10 +135,6 @@ def test_no_dangling_agent_references() -> None:
 
 
 def test_no_false_harness_claims() -> None:
-    # Two claims were wrong and load-bearing: nested agents DO work (the whole
-    # delegated execute design depends on it), and the ignored frontmatter
-    # fields are ignored, not rejected. A false statement about the harness is
-    # corrected in place, including inside history and rationale tables.
     root = AGENTS_DIR.parent
     docs = [root / "README.md", root / "PLAN.md"]
     docs += sorted((root / "skills").rglob("*.md"))
@@ -207,9 +165,6 @@ def _phase3_region(text: str, source: str) -> str:
 def test_research_deep_dossier_format() -> None:
     research = (AGENTS_DIR / "dp-research-deep.md").read_text()
 
-    # The dossier is question-first, as bold-label blocks (no internal H2s,
-    # so it nests under a ### heading in the plan appendix without breaking
-    # the H2-based appendix slicing).
     labels = ["**The question**", "**The answer**", "**What we found**", "**Sources**"]
     pos = -1
     for label in labels:
@@ -225,8 +180,6 @@ def test_research_deep_dossier_format() -> None:
         "dp-research-deep.md: the retired ## Verdict dossier heading must not resurface"
     )
 
-    # The orchestration files stop restating the dossier section list and
-    # point at the agent file as its normative home.
     for path in (DEEP_PLAN / "SKILL.md", DEEP_PLAN / "references" / "phase-prompts.md"):
         region = _phase3_region(path.read_text(), path.name)
         assert "Canonical snippet" not in region, (
@@ -236,9 +189,6 @@ def test_research_deep_dossier_format() -> None:
             f"{path.name}: Phase 3 must name dp-research-deep.md as the dossier's home"
         )
 
-    # The dossier's downstream consumer is now the plan-integrity cluster, run by
-    # the readability leaf; the Phase 4.6 fragment briefs it on the question-first
-    # labels in place of the retired standalone critic's own input section.
     fragment = (DEEP_PLAN / "references" / "phase-prompts.md").read_text()
     assert "The question" in fragment, (
         "phase-prompts.md must brief the plan-integrity run on the question-first "

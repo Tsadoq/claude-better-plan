@@ -1,31 +1,3 @@
-"""Component tests for file_issues.py: stage 2's one command, run end to end.
-
-The command runs for real here -- real slice files under `tmp_path`, the real
-parser, the real pre-flight checks, the real GitHub adapter, and the production
-`DryRunTransport` rather than a stand-in for it. That is the point of testing
-this level: the thing being asserted is what the wiring does by default, and a
-test that substituted the transport would be asserting its own wiring instead.
-
-Two tripwires make "no call was made" observable rather than assumed.
-`_no_network` refuses every HTTP connection outright and records every argv that
-reaches `subprocess.run`, so a run that reached GitHub fails the test instead of
-passing it quietly. The recorded argv list is also an assertion in its own
-right: a dry run is allowed to ask the local `gh` what version it is and which
-flags it takes, because the sequence it describes is only the sequence the real
-run would send if it knows which spelling that `gh` accepts, and it is allowed
-nothing else. Both probes name no repository, which is what the assertion pins.
-
-The later tests drop below the command line to `file_batch` and `read_parent`
-with a fake transport, because what they assert cannot be seen from a dry run: a
-dry run writes no ledger entry at all, so only a run that creates issues can
-show each entry landing before the next create starts, and it reads no live
-state, so only a reading run can show the parent being counted across pages and
-walked up for its depth. Both are what a refusal or a killed run depends on.
-
-Runnable two ways:
-    python3 -m pytest skills/product-issues/tests/test_file_issues_cli.py
-    uv run --no-project pytest skills/product-issues/tests/test_file_issues_cli.py
-"""
 
 from __future__ import annotations
 
@@ -49,10 +21,6 @@ def _load(name: str) -> Any:
     spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
-    # Registered before it is executed, and the siblings loaded before their
-    # importers, for the reason test_github_destination.py's `_load` sets out:
-    # `@dataclass` resolves string annotations through `sys.modules[cls.__module__]`,
-    # and an unregistered module makes that lookup return None mid-decoration.
     sys.modules[name] = mod
     spec.loader.exec_module(mod)
     return mod
@@ -65,21 +33,12 @@ github_destination = _load("github_destination")
 preflight = _load("preflight")
 file_issues = _load("file_issues")
 
-# The repository the fixtures were captured against, used here only as the
-# `--repo` argument: nothing in this file reaches it.
 REPO = "Tsadoq/claude-better-plan"
 
 SLUG = "cohort-review"
 
-# The captured issue, whose `id` and `number` disagree by nine orders of
-# magnitude. The ledger records both, so a slice file written from it is
-# evidence that the two were kept apart on the way in.
 ISSUE_25 = json.loads((FIXTURES / "issue_25.json").read_text(encoding="utf-8"))
 
-# A second issue for the two-slice batch: the captured payload with its two
-# integers moved, which is as close to captured as a second create can get from
-# one `gh api` capture. Its number and id disagree for the same reason the real
-# one's do.
 ISSUE_26 = {
     **ISSUE_25,
     "number": 26,
@@ -87,30 +46,15 @@ ISSUE_26 = {
     "html_url": "https://github.com/Tsadoq/claude-better-plan/issues/26",
 }
 
-# Issue 14 as the parent: issue 25 really is one of its sub-issues in the
-# captured set, so `issue_25.json`'s own `parent_issue_url` is the evidence the
-# depth walk runs against rather than a URL written here.
 PARENT = 25
 GRANDPARENT = 14
 
-# Every sub-issue `gh api .../issues/14/sub_issues` returned: 11 of them, which
-# is one short page and therefore the end of the list.
 SUB_ISSUES = json.loads((FIXTURES / "sub_issues_populated.json").read_text(encoding="utf-8"))
 
-# Neither machine in this suite has the 2.94.0 link flags. Nothing below turns
-# on that: every link this beat sends goes to the REST endpoints either way.
 NO_GH = gh_capability.Capability(usable=False, version=None, supports_link_flags=False)
 
 
 def _no_network(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
-    """Refuse every HTTP connection, and return the list every shelled-out argv
-    is recorded into.
-
-    `subprocess.run` is wrapped rather than replaced, so what runs is what
-    production runs and the list is an observation rather than a substitution.
-    `issue_transport` calls `subprocess.run` through the same module object this
-    patches, which is what puts its calls in the list.
-    """
     shelled: list[list[str]] = []
     real_run = subprocess.run
 
@@ -130,12 +74,6 @@ def _no_network(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
 
 
 def _slug_folder(tmp_path: Path, *, filed: dict[str, Any] | None = None) -> Path:
-    """A product dir holding one slug with a roadmap and two slice files.
-
-    `filed` is the ledger entry written into the first slice, for the resumed-run
-    case. The roadmap carries the `ITEM2` both slices name, because a slice whose
-    upstream id that file does not hold is a batch pre-flight refuses.
-    """
     product_dir = tmp_path / "product"
     folder = product_dir / SLUG
     issues = folder / "issues"
@@ -296,11 +234,6 @@ def test_each_ledger_entry_is_written_before_the_next_issue_is_created(tmp_path:
 
 
 def test_the_parent_is_counted_across_every_page_of_its_sub_issues(tmp_path: Path) -> None:
-    # A full first page followed by the captured 11. A page of 100 cannot be
-    # captured -- no issue here has that many children -- so the padding is the
-    # captured list repeated; only its length matters, and the length is the
-    # whole subject: a reader that stopped at the first full page would report
-    # 100 where the parent has 111.
     padding = [dict(one) for one in (SUB_ISSUES * 10)[:100]]
     transport = _FakeGitHub(pages=(padding, SUB_ISSUES), payloads={GRANDPARENT: {}})
 
@@ -343,18 +276,6 @@ def test_a_placeholder_issue_is_refused_rather_than_written_into_a_slice(tmp_pat
 
 
 class _FakeGitHub:
-    """A GitHub that answers from the fixtures and reads the ledger as it goes.
-
-    `pages` is answered to sub-issue list calls in order, one page per call, and
-    `payloads` answers a read of one issue by its number; both are what the
-    parent-reading tests drive. `creates` is the queue of issues to hand back,
-    and `watching` the slice files to inspect at each create.
-
-    `recorded_at_each_create` holds, at the moment of each create, whether each
-    watched slice file already carries a `filed_github` entry. That snapshot can
-    only be taken from inside the transport, because the question it answers is
-    what was on disk at the instant the next create was about to go out.
-    """
 
     def __init__(
         self,
@@ -389,8 +310,6 @@ class _FakeGitHub:
 
 
 def _trailing(url: str) -> int:
-    """The issue number an `Invocation`'s path ends in, which is how the fake
-    knows which issue a read is asking about."""
     try:
         return int(url.rstrip("/").rsplit("/", 1)[-1])
     except ValueError:
@@ -398,8 +317,6 @@ def _trailing(url: str) -> int:
 
 
 class _Sink:
-    """Somewhere for the dry run's own printing to go, so a test's output is its
-    assertions rather than console noise."""
 
     def write(self, text: str) -> int:
         return len(text)

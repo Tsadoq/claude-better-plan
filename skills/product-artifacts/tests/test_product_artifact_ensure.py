@@ -1,9 +1,3 @@
-"""Component test for product_artifact.py's --ensure-folder entry point.
-
-Runnable two ways:
-    python3 skills/product-artifacts/tests/test_product_artifact_ensure.py
-    python3 -m pytest skills/product-artifacts/tests/test_product_artifact_ensure.py
-"""
 
 from __future__ import annotations
 
@@ -43,8 +37,6 @@ def _run_main(argv: list[str]) -> tuple[dict[str, Any], int]:
 
 
 def _generated_region(readme_text: str) -> str:
-    """Text strictly between the product markers, exclusive of the markers
-    themselves."""
     m = product_artifact.artifact_common.markers("product")
     begin = readme_text.find(m.begin)
     end = readme_text.find(m.end)
@@ -53,9 +45,6 @@ def _generated_region(readme_text: str) -> str:
 
 
 def _outer_halves(readme_text: str) -> tuple[str, str]:
-    """(prefix before the begin marker, suffix after the end marker), so a
-    disturbed prefix and a disturbed suffix are reported as two distinct
-    failures rather than one combined diff."""
     m = product_artifact.artifact_common.markers("product")
     begin = readme_text.find(m.begin)
     end = readme_text.find(m.end)
@@ -70,8 +59,6 @@ def test_ensure_folder_is_idempotent_and_repairs_a_missing_index_row() -> None:
         product_dir = Path(d)
         readme = product_dir / "README.md"
 
-        # First call: the folder does not exist yet, so this call creates
-        # it and writes the index row for the first time.
         first, code = _run_main(
             ["--ensure-folder", "--slug", slug, "--product-dir", str(product_dir)]
         )
@@ -84,8 +71,6 @@ def test_ensure_folder_is_idempotent_and_repairs_a_missing_index_row() -> None:
         first_region = _generated_region(first_text)
         assert first_region.count(f"| {slug} ") == 1
 
-        # Second call: same slug, folder already exists -- a true no-op on
-        # the folder, but the index is still (re)written.
         second, code = _run_main(
             ["--ensure-folder", "--slug", slug, "--product-dir", str(product_dir)]
         )
@@ -97,9 +82,6 @@ def test_ensure_folder_is_idempotent_and_repairs_a_missing_index_row() -> None:
         assert second_prefix == first_prefix, "prefix before begin marker changed on a no-op call"
         assert second_suffix == first_suffix, "suffix after end marker changed on a no-op call"
 
-        # Simulate the index row for this slug being lost or hand-edited:
-        # delete it from the generated region while leaving the folder (and
-        # everything outside the markers) untouched.
         m = product_artifact.artifact_common.markers("product")
         begin = second_text.find(m.begin)
         end = second_text.find(m.end)
@@ -111,8 +93,6 @@ def test_ensure_folder_is_idempotent_and_repairs_a_missing_index_row() -> None:
         readme.write_text(damaged_text)
         assert f"| {slug} " not in _generated_region(readme.read_text())
 
-        # Third call: the folder still exists (no-op again), but the index
-        # row must be restored.
         third, code = _run_main(
             ["--ensure-folder", "--slug", slug, "--product-dir", str(product_dir)]
         )

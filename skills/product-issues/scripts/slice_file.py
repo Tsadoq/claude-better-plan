@@ -1,41 +1,3 @@
-#!/usr/bin/env python3
-"""One slice file's frontmatter, read and amended without disturbing its body.
-
-A slice is a single unit of work cut from a roadmap item and written as one
-markdown file under `docs/product/<slug>/issues/`. Its opening `---` block is a
-flat sequence of `key: value` lines whose structured values are JSON:
-
-    ---
-    slice: SLICE-03
-    title: Narrow the roster to one cohort
-    activity: Review a cohort
-    roadmap_item: ITEM2
-    labels: ["product-issues", "size/S"]
-    filed_github: {"number": 42, "id": 5046900288, "url": "https://..."}
-    ---
-
-Flat rather than nested, because every script in this suite is standard library
-only: there is no YAML parser to reach for, while `json.loads` and `json.dumps`
-are both there and round-trip exactly. That is also why an indented line is a
-refusal here rather than something to skip. A format that merely looks like YAML
-would otherwise start being written as YAML, and the first nested block would be
-read as half a slice by code that reported no problem.
-
-The second half of this module is the ledger. Once a slice has been filed, its
-`filed_<destination>` key records the issue that now exists, and a later run
-reads that key to know it has nothing left to do for this slice. That key's name
-is composed from the destination rather than fixed, and `Slice.filed` and
-`write_filed_entry` are the pair that compose it, so a caller names a
-destination and never a key. `write_filed_entry` is held to a narrow
-contract in return: it adds or replaces exactly that one key, leaves the other
-keys in the order the file already had, and leaves the body bytes alone. The
-body is editorial text a person wrote and a person approved, and nothing in this
-beat is entitled to reformat it.
-
-`REQUIRED_KEYS` is this code's copy of a schema published in
-`references/story-map-template.md`, which is that schema's single home; a
-contract test pins the two together rather than trusting them to stay in step.
-"""
 
 from __future__ import annotations
 
@@ -47,25 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# The line that opens and closes the frontmatter block.
 FENCE = "---"
 
-# Every ledger key is this prefix followed by a destination name. It sits here
-# because `write_filed_entry` and `Slice.filed` compose the key between them,
-# and a caller that named one itself would be spelling this module's format.
 FILED_PREFIX = "filed_"
 
-# The keys every slice carries, in the order a slice states them. This is the
-# code's copy of the schema published in `references/story-map-template.md`:
-#
-#   slice         the slice's own id, stable across runs and never renumbered
-#   title         the one-line title the issue is filed under
-#   activity      the story map backbone activity this slice sits under
-#   roadmap_item  the `ITEM` id in roadmap.md that this slice was cut from
-#   labels        a JSON list of label names to apply at the destination
-#
-# A `milestone` and any `filed_<destination>` entry are optional and so are
-# absent from this tuple: a slice is complete before anything has been filed.
 REQUIRED_KEYS: tuple[str, ...] = ("slice", "title", "activity", "roadmap_item", "labels")
 
 
@@ -129,9 +76,6 @@ def read_slice(path: Path) -> Slice:
     except UnicodeDecodeError as err:
         raise SliceFormatError(path, None, f"is not valid UTF-8: {err}") from err
 
-    # A carriage return is dropped at each comparison below rather than out of
-    # `lines` here, because the body is rejoined from this same list: normalising
-    # it once would be normalising somebody's file on their behalf.
     lines = text.split("\n")
     if lines[0].rstrip("\r") != FENCE:
         raise SliceFormatError(path, 1, f"does not open with a {FENCE!r} fence, so it carries no frontmatter")
@@ -149,8 +93,6 @@ def read_slice(path: Path) -> Slice:
     if missing:
         raise SliceFormatError(path, None, f"is missing {', '.join(missing)}, which every slice must carry")
 
-    # `split` and `join` on the same separator are exact inverses, so this is
-    # the file's own text after the closing fence rather than a rebuild of it.
     return Slice(path=path, frontmatter=frontmatter, body="\n".join(lines[closing + 1 :]))
 
 
@@ -172,8 +114,6 @@ def write_filed_entry(path: Path, destination: str, record: Mapping[str, Any]) -
     """
     current = read_slice(path)
     frontmatter = dict(current.frontmatter)
-    # Assignment leaves an existing key where it was and appends a new one,
-    # which is exactly the ordering rule this function promises.
     frontmatter[_filed_key(destination)] = dict(record)
 
     rendered = "".join(f"{key}: {_rendered(value)}\n" for key, value in frontmatter.items())

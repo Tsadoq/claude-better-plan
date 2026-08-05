@@ -1,32 +1,3 @@
-"""Unit tests for github_destination.py: the calls that create and link a slice set.
-
-`fixtures/issue_25.json` is the load-bearing artefact here, and the property
-that matters is that its two integers disagree: `id` is 5046900288 while
-`number` is 25. The sub-issue and dependency endpoints take the database id and
-every other endpoint in this beat takes the number, so a fixture whose id
-happened to equal its number would let an adapter reaching for the wrong integer
-pass every assertion below. Anyone re-capturing it against another issue is not
-refreshing a sample, they are deleting the only evidence that the distinction
-was ever checked, and must keep the two values apart.
-
-No call leaves this process and no `gh` is invoked. The adapter runs for real
-against a fake `Transport` -- the same port production holds -- which records
-every invocation in arrival order and answers from the captured payload. Order
-is half of what this module is responsible for: a label that does not exist when
-a create names it, or a link sent before the issue it points at, are failures no
-single-call assertion would catch. The last test swaps the fake for the real
-`DryRunTransport`, because a dry run is the one caller that must reach the end
-of the sequence while knowing nothing about the repository.
-
-Two payloads here are not captured. A second issue is the captured one with its
-number and id moved, because one `gh api` capture cannot describe a two-slice
-batch, and the milestone answers are shaped from the REST reference. Both are
-named below so a reader knows which bytes came off a real invocation.
-
-Runnable two ways:
-    python3 -m pytest skills/product-issues/tests/test_github_destination.py
-    uv run --no-project pytest skills/product-issues/tests/test_github_destination.py
-"""
 
 from __future__ import annotations
 
@@ -47,11 +18,6 @@ def _load(name: str) -> Any:
     spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
-    # Registered before it is executed, and under its plain name: `@dataclass`
-    # resolves the string annotations `from __future__ import annotations`
-    # produces through `sys.modules[cls.__module__]`, and the adapter's own
-    # imports of its siblings must find these instances rather than loading
-    # second copies whose `Invocation` would be a different class.
     sys.modules[name] = mod
     spec.loader.exec_module(mod)
     return mod
@@ -62,22 +28,12 @@ gh_capability = _load("gh_capability")
 slice_file = _load("slice_file")
 github_destination = _load("github_destination")
 
-# The repository the fixtures were captured against.
 REPO = "Tsadoq/claude-better-plan"
 
-# The captured issue. Its `id` and `number` are read from the file rather than
-# written out here, so a re-capture moves every assertion with it.
 ISSUE_25 = json.loads((FIXTURES / "issue_25.json").read_text(encoding="utf-8"))
 
-# The issue the batch is filed under. Not arbitrary: issue 25 really is one of
-# issue 14's sub-issues in the captured set, so the parent-and-child pair these
-# tests file is the pair GitHub actually holds.
 PARENT = 14
 
-# A second issue for the batch tests: the captured payload with its two integers
-# moved, which is as close to captured as a second create can get from a single
-# `gh api` capture. Its number and id disagree for the same reason the real
-# one's do.
 ISSUE_26 = {
     **ISSUE_25,
     "number": 26,
@@ -85,20 +41,11 @@ ISSUE_26 = {
     "html_url": "https://github.com/Tsadoq/claude-better-plan/issues/26",
 }
 
-# The two capabilities the adapter is asked to spell calls for. Neither machine
-# has the 2.94.0 link flags; that direction changes nothing here, because every
-# link this module sends goes to the REST endpoints on both paths.
 GH_INSTALLED = gh_capability.Capability(usable=True, version=(2, 82, 0), supports_link_flags=False)
 NO_GH = gh_capability.Capability(usable=False, version=None, supports_link_flags=False)
 
 
 class _FakeGitHub:
-    """A GitHub that answers from the fixtures and remembers what it was asked.
-
-    `invocations` holds every call in arrival order, including creates: a create
-    is an ordinary `POST repos/{owner}/{repo}/issues` on the REST path, so
-    recording it as one is what lets an ordering assertion read a single list.
-    """
 
     def __init__(
         self,
@@ -123,8 +70,6 @@ class _FakeGitHub:
             return issue_transport.Result(status=200, json=list(self._milestones))
         if invocation.method == "POST" and invocation.url == f"repos/{REPO}/labels":
             if body.get("name") in self._existing_labels:
-                # What the REST path gets for a label whose name is taken, and
-                # the shape `RestTransport` raises it in.
                 raise issue_transport.CallFailed(invocation.summary, 422, "already_exists")
             return issue_transport.Result(status=201, json=dict(body))
         if invocation.method == "POST" and invocation.url == f"repos/{REPO}/milestones":
@@ -148,8 +93,6 @@ class _FakeGitHub:
         return issue_transport.Filed(number=payload["number"], id=payload["id"], url=payload["html_url"])
 
     def sent(self, url: str) -> Any:
-        """The one invocation aimed at `url`, or a failure naming what was sent
-        instead -- a missing call and a duplicated one are different bugs."""
         matching = [one for one in self.invocations if one.url == url]
         sent = [one.url or one.argv for one in self.invocations]
         assert len(matching) == 1, f"expected exactly one call to {url}, got {sent}"
@@ -166,13 +109,6 @@ def _write_slice(
     milestone: str | None = None,
     filed: dict[str, Any] | None = None,
 ) -> Any:
-    """A real slice file, read back through the real parser.
-
-    Written and re-read rather than constructed, so these tests file what
-    `read_slice` actually produces rather than what a hand-built `Slice` would.
-    `labels` is the raw frontmatter text, so a test can write a malformed value
-    the way somebody's editor would.
-    """
     lines = [
         "---",
         f"slice: {slice_id}",
@@ -270,9 +206,6 @@ def test_each_issue_is_yielded_before_the_next_one_is_created(tmp_path: Path) ->
         _write_slice(tmp_path, "slice-02.md", slice_id="SLICE-02", title="Show one cohort"),
     ]
 
-    # The create count at each yield is what the caller's ledger write depends
-    # on: it writes between two yields, so a later create having already
-    # happened would mean a killed run could leave an issue no ledger records.
     at_each_yield = [
         (one.frontmatter["slice"], record.number, len(transport.created))
         for one, record in github_destination.file_slices(
@@ -289,8 +222,6 @@ def test_each_issue_is_yielded_before_the_next_one_is_created(tmp_path: Path) ->
 def test_a_milestone_the_repository_already_carries_is_reused_rather_than_recreated(
     tmp_path: Path,
 ) -> None:
-    # Number 3 rather than 1: a milestone number is its own sequence, and one
-    # that matched an issue number would hide a mix-up between them.
     transport = _FakeGitHub(milestones=({"title": "Release 1", "number": 3},))
     one = _write_slice(
         tmp_path,
@@ -412,8 +343,6 @@ def test_a_dry_run_describes_the_whole_sequence_without_making_a_call(tmp_path: 
 
 
 class _Sink:
-    """Somewhere for the dry run's own printing to go, so the test's output is
-    the invocation list rather than six lines of console noise."""
 
     def __init__(self, lines: list[str]) -> None:
         self._lines = lines
