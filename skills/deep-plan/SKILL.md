@@ -156,6 +156,8 @@ Goal: build a shared evidence base from three independent angles before any deci
 - `dp-research-shallow` (haiku) -- always.
 - `dp-source-ingest` (sonnet) -- only if the user provided source material (file paths, URLs, Jira IDs `[A-Z]+-\d+`, or pasted text). Parse the original `/deep-plan` prompt for these signals first; if absent, ask the user once via the `AskUserQuestion` in the Phase 1 fragment before launching.
 
+**Detect a written spec** first: `python3 ${CLAUDE_PLUGIN_ROOT}/skills/product-artifacts/scripts/product_artifact.py --check-freshness --product-dir docs/product`. Take the entry whose slug exactly equals the normalised topic, else the sole one with a `spec.md`. All else is silence: no match, two candidates, or an exact match lacking `spec.md` -- no fall-back to the sole rule. Offer `docs/product/<slug>/spec.md` as that `AskUserQuestion`'s recommended first option, state named: `stale` is flagged, not vetoed. Never ingest unasked: only the user's pick reaches `dp-source-ingest`.
+
 **Cap**: exactly one instance of each agent type in Phase 1.
 
 **Synthesise** their outputs into:
