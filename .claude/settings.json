@@ -21,7 +21,15 @@
       "Bash(python3 -m pytest:*)",
       "Bash(uvx pytest:*)",
       "Bash(git diff:*)",
-      "Bash(git ls-files:*)"
+      "Bash(git ls-files:*)",
+      "Edit(/skills/product-issues/**)",
+      "Write(/skills/product-issues/**)",
+      "Write(/pyproject.toml)",
+      "Bash(uv run pytest:*)",
+      "Bash(gh --version)",
+      "Bash(gh issue create --help)",
+      "Bash(gh label list:*)",
+      "Bash(gh api:*)"
     ]
   }
 }

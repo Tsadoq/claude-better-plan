@@ -38,6 +38,30 @@ under each heading is that beat's concern, not this substrate's.
 - `spec.md`: `## Problem and opportunity`, `## Requirements in scope`, `## Non-goals`
 - `roadmap.md`: `## Scored items`, `## Sequence`, `## Risks`
 
+## Non-member artifacts
+
+Not every beat in this family writes a member. A beat may instead write its
+own folder inside `docs/product/<slug>/`, cut from a member but standing
+outside the chain. Such an artifact is not a link in it: nothing is derived
+from the folder, so it carries no provenance line and `--provenance-line`
+returns a null line for it, and the freshness states below are defined over
+the member table above and say nothing about it. A row here therefore leaves
+the chain closed at five rather than making it six.
+
+| Folder | Owning skill |
+|---|---|
+| `issues/` | `product-issues` |
+
+`Folder` names what the beat writes, not what it is: every artifact in this
+family is an artifact, and only the ones below the member table are folders.
+`Owning skill` carries the same meaning here as it does above: the single
+published home of the artifact-to-beat derivation for the rows beneath it,
+read by a skill that needs it rather than copied into one. The two columns
+together name every beat in this family, so a reader after the beats rather
+than the members reads both and neither alone -- reading only the first is how
+a beat that owns no member becomes invisible to something that derives per
+beat.
+
 ## Provenance
 
 Every member after the first records where it came from with a single

@@ -32,6 +32,7 @@ testpaths = [
     "skills/product-spec/tests",
     "skills/product-roadmap/tests",
     "skills/product-review/tests",
+    "skills/product-issues/tests",
 ]
 # importlib mode isolates the sibling test dirs from each other, so same-named
 # test modules or conftests across skills cannot collide on import.
