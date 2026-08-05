@@ -11,21 +11,33 @@ rewritten without editing CI. Stdlib only, so CI does not need pyyaml.
 Runnable two ways:
     python3 skills/deep-plan/tests/test_skill_contract.py
     python3 -m pytest skills/deep-plan/tests/test_skill_contract.py
+
+The plain-python runner skips any test that takes a pytest fixture, because
+nothing outside pytest can supply the argument.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import inspect
+import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
 DEEP_PLAN_SKILL = ROOT / "skills" / "deep-plan" / "SKILL.md"
 EXECUTE_SKILL = ROOT / "skills" / "deep-plan-execute" / "SKILL.md"
 DESIGN_REVIEW_SKILL = ROOT / "skills" / "design-review" / "SKILL.md"
 PHASE_PROMPTS = ROOT / "skills" / "deep-plan" / "references" / "phase-prompts.md"
+
+# The substrate under Phase 1's detection. The skill spells this path with
+# `${CLAUDE_PLUGIN_ROOT}`, which only the harness expands, so the test reaches
+# the same script through the repo root instead.
+PRODUCT_ARTIFACT = ROOT / "skills" / "product-artifacts" / "scripts" / "product_artifact.py"
 
 
 def _guarantees() -> ModuleType:
@@ -84,6 +96,313 @@ def test_skill_declares_an_argument_hint() -> None:
     # no fixed value, so all that can be checked is that the key is declared.
     fm = _frontmatter(DEEP_PLAN_SKILL.read_text())
     assert _has_key(fm, "argument-hint"), "deep-plan SKILL.md needs an argument-hint"
+
+
+def test_phase1_offers_a_detected_product_spec() -> None:
+    # The product chain writes docs/product/<slug>/spec.md for exactly this
+    # consumer, so Phase 1 has to surface one when it finds one. What keeps the
+    # bridge safe rather than merely present is the rule around it: the spec is
+    # offered through the question Phase 1 was already asking, it reaches
+    # dp-source-ingest only if the user picks it, and it goes silent rather than
+    # guess. Prose that names the files without stating that rule reads as a
+    # feature and behaves as a coin flip, so both are pinned. File size stays
+    # with test_phase_instruction_files_fit_their_token_budgets.
+    #
+    # The two regions end at different headings because the files differ: in
+    # SKILL.md Phase 1 is followed by Phase 2, while phase-prompts.md has no
+    # Phase 2 section at all (SKILL.md carries that phase whole), so its Phase 1
+    # runs to Phase 3.
+    skill_region = _region(DEEP_PLAN_SKILL.read_text(), "## Phase 1", "## Phase 2", "SKILL.md")
+    prompts_region = _region(
+        PHASE_PROMPTS.read_text(), "## Phase 1", "## Phase 3", "phase-prompts.md"
+    )
+    regions = (("SKILL.md", skill_region), ("phase-prompts.md", prompts_region))
+
+    for name, region in regions:
+        # Every check below reads only the paragraphs naming spec.md, never the
+        # whole region. Both regions already said `dp-source-ingest`,
+        # `AskUserQuestion` and "exactly one instance of each agent type" before
+        # this feature existed, so a region-wide search would come back green
+        # with the spec-detection prose deleted. Narrowing is what makes these
+        # assertions about the bridge rather than about its neighbours.
+        detection = "\n\n".join(p for p in region.split("\n\n") if "spec.md" in p)
+        for term in ("docs/product/", "dp-source-ingest", "AskUserQuestion"):
+            assert term in detection, (
+                f"{name}: Phase 1 mentions no {term!r} alongside the detected spec -- "
+                f"the spec must be offered through the existing AskUserQuestion and "
+                f"reach dp-source-ingest only once the user picks it, and prose that "
+                f"leaves those two ties unstated does not say so"
+            )
+
+        lowered = detection.lower()
+        for arm in ("exact", "sole"):
+            assert arm in lowered, (
+                f"{name}: Phase 1 names the detection but not its {arm!r} arm -- "
+                f"selection is an exact topic-to-slug match, else the sole "
+                f"spec-bearing slug, and prose that omits when it fires is not a rule"
+            )
+        assert "silent" in lowered or "silence" in lowered, (
+            f"{name}: Phase 1 must state the stopping condition as silence -- no "
+            f"match, or an exact match whose slug has no spec.md, offers nothing "
+            f"rather than falling through to another initiative's spec"
+        )
+        assert "fall" in lowered, (
+            f"{name}: Phase 1 states silence but not that an exact match lacking "
+            f"spec.md refuses to fall back to the sole-slug arm -- without that "
+            f"clause the two silence cases read as one and seeding a plan from a "
+            f"different initiative's spec looks permitted"
+        )
+        assert "stale" in lowered, (
+            f"{name}: Phase 1 must name `stale` inside the offer -- the freshness "
+            f"state is reported so the user weighs it, and an offer that withholds "
+            f"it has quietly made that call for them"
+        )
+
+    for term in ("--check-freshness", "${CLAUDE_PLUGIN_ROOT}"):
+        assert term in skill_region, (
+            f"SKILL.md: Phase 1 must name {term!r} -- it owns the one substrate call "
+            f"detection runs, which is why the fragment can defer the command to it"
+        )
+
+
+# The product members Phase 1 may not name. `spec.md` is the one member the
+# bridge carries; each of these belongs to a different consumer, so a Phase 1
+# offering one has widened the bridge past what was reviewed. Which members the
+# product chain has, how a slug normalises and how provenance is written are all
+# skills/product-artifacts/tests/'s to own -- this list is only the subset this
+# phase is forbidden to mention.
+FOREIGN_PRODUCT_MEMBERS = ("brief.md", "discovery.md", "requirements.md", "roadmap.md")
+
+# Every `## Phase ` heading SKILL.md carries, by number rather than by title, so
+# retitling a phase stays free while adding, dropping or reordering one has to be
+# a visible edit here. guarantees.py pins that each of these headings is present
+# and in order; what it cannot say is that there are no others.
+#
+# This is the second overlap with guarantees.py's `deep-plan-skill.section-sequence`
+# (its own note names `## Preflight`/`## Step 5` as the first), and the repetition
+# is deliberate rather than missed: derived from that list, this check would agree
+# with whatever guarantees.py was last edited to say, and a phase added to both
+# files would pass a guard whose entire job is to make that addition deliberate.
+# Two hand-typed witnesses is the property being bought.
+EXPECTED_PHASE_NUMBERS = ("0", "1", "2", "3", "4", "4.6", "5")
+
+# Checkpoint 1 lives inside the Phase 1 region, so an edit aimed at Phase 1 can
+# reach it. These are the strings the user actually reads and answers.
+CHECKPOINT1_LITERALS = (
+    '"Based on Phase 1 findings, here is what I think we are planning. Confirm scope?"',
+    'Header: "Scope"',
+    '"Scope is correct, proceed to decision surfacing"',
+    '"Narrow to <X>"',
+    '"Broaden to <Y>"',
+    '"Defer <Z> to a follow-up plan"',
+)
+
+
+def _phase1_contract_violations(skill_text: str, prompts_text: str) -> list[str]:
+    """What the Phase 1 spec bridge was forbidden to change, and did.
+
+    Returns one human-readable line per broken contract, empty when both texts
+    are clean. It takes text rather than paths so the same checks run against the
+    shipped files and against a deliberately broken variant of them, which is the
+    only way to show the guard can still fail.
+    """
+    phases = re.findall(r"^## Phase ([\d.]+)", skill_text, re.MULTILINE)
+    if phases != list(EXPECTED_PHASE_NUMBERS):
+        # Everything below navigates by these headings, so a structural break is
+        # reported alone rather than buried under the region failures it causes.
+        return [
+            f"SKILL.md carries phases {phases}, expected {list(EXPECTED_PHASE_NUMBERS)} -- "
+            f"the spec bridge edits Phase 1 and nothing else, so a phase added, dropped "
+            f"or reordered here is either collateral damage or an unreviewed feature"
+        ]
+
+    # The two Phase 1 regions end at different headings for the reason
+    # test_phase1_offers_a_detected_product_spec records: phase-prompts.md has no
+    # Phase 2 section, because SKILL.md carries that phase whole.
+    regions = (
+        ("SKILL.md", _region(skill_text, "## Phase 1", "## Phase 2", "SKILL.md")),
+        (
+            "phase-prompts.md",
+            _region(prompts_text, "## Phase 1", "## Phase 3", "phase-prompts.md"),
+        ),
+    )
+
+    violations = [
+        f"{name}: Phase 1 names {member} -- the bridge offers exactly one product "
+        f"member, spec.md, and every other member is a different consumer's contract "
+        f"that nothing here has reviewed"
+        for name, region in regions
+        for member in FOREIGN_PRODUCT_MEMBERS
+        if member in region
+    ]
+
+    checkpoint1 = _region(skill_text, "### Checkpoint 1", "## Phase 2", "SKILL.md")
+    violations += [
+        f"SKILL.md: Checkpoint 1 no longer carries {literal} verbatim -- it sits inside "
+        f"the Phase 1 region the bridge edits, and the scope question the user answers "
+        f"is not the bridge's to reword"
+        for literal in CHECKPOINT1_LITERALS
+        if literal not in checkpoint1
+    ]
+
+    return violations
+
+
+def test_phase1_bridge_leaves_members_phases_and_checkpoint1_intact() -> None:
+    # Three invariants the spec bridge must not have moved on its way in: Phase 1
+    # names one product member and no other, SKILL.md's phase list is unchanged,
+    # and Checkpoint 1 still reads exactly as it did. Task 1's test owns what the
+    # bridge has to say; this one owns what it was not allowed to disturb, which
+    # is why it re-asserts none of those terms.
+    skill_text = DEEP_PLAN_SKILL.read_text()
+    prompts_text = PHASE_PROMPTS.read_text()
+
+    violations = _phase1_contract_violations(skill_text, prompts_text)
+    assert not violations, "the Phase 1 spec bridge reached past its scope:\n" + "\n".join(
+        violations
+    )
+
+    # A guard nobody has watched fail is a guard nobody has tested. Perturb the
+    # shipped text in memory -- one Checkpoint 1 option dropped, a second product
+    # member offered inside Phase 1 -- and require the helper to name both. Nothing
+    # on disk is touched, so the test is order-independent. Every string edited
+    # below is one the assertion above already pins, `"Broaden to <Y>"` from
+    # CHECKPOINT1_LITERALS and the Phase 2 heading from EXPECTED_PHASE_NUMBERS, so
+    # wording that drifts out of the file fails there rather than quietly turning
+    # a perturbation into a no-op that nothing notices.
+    widened = skill_text.replace('"Broaden to <Y>"', "", 1).replace(
+        "## Phase 2", "Offer `docs/product/<slug>/roadmap.md` too.\n\n## Phase 2", 1
+    )
+
+    reported = "\n".join(_phase1_contract_violations(widened, prompts_text))
+    for expected in ("roadmap.md", "Checkpoint 1"):
+        assert expected in reported, (
+            f"the guard stayed silent about {expected!r} against text that breaks it, "
+            f"reporting only: {reported!r} -- a contract check that cannot fail is not "
+            f"protecting the contract"
+        )
+
+    # The phase check returns before the other two, so no single perturbation can
+    # exercise all three: an added phase needs its own text or that branch ships
+    # having never once fired.
+    restructured = skill_text + "\n## Phase 6: Unreviewed\n"
+
+    reported = "\n".join(_phase1_contract_violations(restructured, prompts_text))
+    assert "phases" in reported, (
+        f"the guard stayed silent about a phase appended to SKILL.md, reporting only: "
+        f"{reported!r} -- widening the phase list is the failure this check exists for"
+    )
+
+
+def _detection_entries(product_dir: Path, case: str) -> tuple[list[Any], str]:
+    """Phase 1's one substrate call against `product_dir`, run as a subprocess.
+
+    Returns the payload's `entries` list, plus a context line naming `case`
+    with the process's exit status and everything it wrote. Every assertion in
+    the caller ends with that line: substrate drift arrives here as a
+    well-formed payload of the wrong shape rather than as an exception, so a
+    bare comparison would report `[] != 2` and leave the reader to re-run the
+    command by hand to learn what the script actually said.
+    """
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(PRODUCT_ARTIFACT),
+            "--check-freshness",
+            "--product-dir",
+            str(product_dir),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    context = (
+        f"[{case}] `product_artifact.py --check-freshness --product-dir {product_dir}` "
+        f"exited {proc.returncode} and wrote:\n{proc.stdout}{proc.stderr}"
+    )
+
+    assert proc.returncode == 0, (
+        f"Phase 1 makes this call before its sources question on every /deep-plan run, so a "
+        f"non-zero exit is an error shown to a user who asked for none of it. {context}"
+    )
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise AssertionError(
+            f"the detection call stopped printing JSON ({exc}), leaving Phase 1 nothing to "
+            f"read a slug list out of. {context}"
+        ) from exc
+
+    entries = payload.get("entries")
+    assert isinstance(entries, list), (
+        f"the payload carries no `entries` list, and that key is the entire detection input -- "
+        f"the selection rule has nothing to run against without it. {context}"
+    )
+    return entries, context
+
+
+def test_phase1_detection_call_behaves_as_phase1_documents(tmp_path: Path) -> None:
+    # The two tests above pin what Phase 1 says; prose cannot notice that the
+    # command it names stopped answering. That is the failure this one exists
+    # for. `product_artifact.py` is maintained for the product suite, not for
+    # this consumer, so a change to its payload leaves the bridge silently doing
+    # nothing while every wording assertion above stays green -- the feature
+    # reads as built and behaves as absent.
+    #
+    # Only the two properties Phase 1 actually reads are asserted. Which of
+    # `fresh`/`stale`/`unresolvable` a half-written chain earns is
+    # skills/product-artifacts/tests/'s state machine to own, so the
+    # spec-bearing slug is checked for not being `absent` rather than for any
+    # particular state.
+
+    # The overwhelmingly common case: a repository with no docs/product/ at all.
+    # Phase 1 has to read "nothing to offer" off this without the run failing.
+    entries, context = _detection_entries(tmp_path / "no-docs-product", "absent product directory")
+    assert entries == [], (
+        f"a product directory that does not exist enumerated {entries!r} rather than nothing. "
+        f"An empty enumeration is what sends Phase 1 down its silent path, so anything else "
+        f"here is an offer made to a user who has never written a spec. {context}"
+    )
+
+    # Two initiatives, one of them as far as spec.md. This is the shape the
+    # sole-candidate arm of the rule is decided on, which is why the spec-less
+    # slug has to be enumerated too: a payload listing only spec-bearing slugs
+    # would make every repository look like a single-initiative one and fire the
+    # offer exactly where the rule says stay silent.
+    product_dir = tmp_path / "docs" / "product"
+    (product_dir / "alpha").mkdir(parents=True)
+    (product_dir / "alpha" / "spec.md").write_text("# Alpha spec\n")
+    (product_dir / "beta").mkdir()
+    (product_dir / "beta" / "brief.md").write_text("# Beta brief\n")
+
+    entries, context = _detection_entries(product_dir, "two slugs, one spec-bearing")
+
+    assert len(entries) == 2, (
+        f"two slug folders enumerated {len(entries)} entries. Phase 1 counts spec-bearing slugs "
+        f"against the whole list, so a list that drops slugs settles the sole-candidate rule on "
+        f"the wrong denominator. {context}"
+    )
+    for entry in entries:
+        assert "slug" in entry, (
+            f"an entry arrived with no `slug` key: {entry!r}. The slug is what the normalised "
+            f"topic is matched against and what the offered path is built from. {context}"
+        )
+        assert isinstance(entry.get("members"), dict), (
+            f"entry {entry.get('slug')!r} carries no `members` mapping: {entry!r}. Whether a "
+            f"slug has a spec is read out of that mapping and nowhere else. {context}"
+        )
+
+    spec_states = {entry["slug"]: entry["members"].get("spec.md") for entry in entries}
+    assert spec_states.get("alpha") not in (None, "absent"), (
+        f"the slug holding a spec.md reported it as {spec_states.get('alpha')!r}; the states "
+        f"were {spec_states!r}. Phase 1 offers on any state but `absent`, so this one reading "
+        f"is the detection itself. {context}"
+    )
+    assert spec_states.get("beta") == "absent", (
+        f"the slug with no spec.md reported it as {spec_states.get('beta')!r}; the states were "
+        f"{spec_states!r}. `absent` is how Phase 1 rules a slug out, and a slug it cannot rule "
+        f"out makes the sole-candidate arm offer whichever spec it happens to find. {context}"
+    )
 
 
 def test_phase46_states_its_loop_bound() -> None:
@@ -327,6 +646,11 @@ if __name__ == "__main__":
     failed = 0
     for _name, _fn in sorted(globals().items()):
         if _name.startswith("test_") and callable(_fn):
+            if inspect.signature(_fn).parameters:
+                # A pytest fixture argument; nothing out here can supply one, so
+                # say so rather than reporting a TypeError as a failed contract.
+                print(f"SKIP {_name} (needs a pytest fixture)")
+                continue
             try:
                 _fn()
                 print(f"PASS {_name}")

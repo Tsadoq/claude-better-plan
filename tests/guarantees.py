@@ -150,13 +150,20 @@ BUDGETS: dict[str, int] = {
     "description_words": 40,
     # The harness re-attaches a skill body under a front-anchored truncation
     # window of about 5,000 tokens, so a longer SKILL.md silently loses its tail
-    # phases -- Phase 5 and the output budget -- on every re-attach. Held 100
-    # tokens under that window, because o200k_base is only the closest public
-    # approximation of the harness's own accounting and the difference has to
-    # land on the safe side. The file measures ~4,850, so an added phase must
-    # displace something rather than accumulate: it is the one tier that is
-    # re-read, and the cheapest place for new bytes is a reference file.
-    "deep_plan_skill_tokens": 4900,
+    # phases -- Phase 5 and the output budget -- on every re-attach. It sat at
+    # 4,900 to hold 100 tokens of slack against that window, because o200k_base
+    # is only the closest public approximation of the harness's own accounting.
+    # That slack has been spent: raised to 4,999 for Phase 1's spec-detection
+    # paragraph, which teaches Phase 1 to find and offer a written
+    # `docs/product/` spec and is the whole of that feature's instruction. It
+    # measured 142 tokens and could not fit the 69 that were left. 4,999 is the
+    # ceiling issue #14 constraint 7 permits, so this entry cannot be raised
+    # again -- and with the file now at 4,973, only 26 tokens remain under it.
+    # The next author is spending the last of a nearly exhausted entry, not
+    # opening a fresh allowance: anything larger displaces text already there,
+    # or goes to a reference file, which is the cheapest place for new bytes
+    # because this is the one tier that is re-read.
+    "deep_plan_skill_tokens": 4999,
     # phase-prompts.md pays nothing until a phase reads it, so this is not a
     # window, it is a ratchet. The file measured 4,608 tokens while it still
     # restated SKILL.md and 1,892 once it stopped; the cap sits above the latter

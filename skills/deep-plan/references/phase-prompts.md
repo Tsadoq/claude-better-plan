@@ -14,16 +14,23 @@ Nothing here restates `SKILL.md`. Where both need a passage, this file names the
 
 ## Phase 1: the sources question
 
-`SKILL.md`'s `## Phase 1: Parallel triangulation` launches `dp-source-ingest` only when the user has material to ingest, and asks once when the original prompt carries no signal of it. That question is:
+`SKILL.md`'s `## Phase 1: Parallel triangulation` launches `dp-source-ingest` only when the user has material to ingest, and asks once when the original prompt carries no signal of it. It also owns the spec-detection rule and the substrate call behind it, neither of which is reproduced here -- except the one clause the option list below cannot be read without, since nothing else says whether option 1 exists. That clause: an exact match of the normalised topic against a product slug, else the sole slug carrying a `spec.md`; no match, two candidates, and an exact match whose slug has no `spec.md` are all silence, the last of those without falling back to the sole-slug arm. If this clause and `SKILL.md` ever disagree, `SKILL.md` is the live one and this is the stale copy. Silence drops option 1 and the remaining three keep their order.
+
+Why that last case is silence rather than a fallback is the part `SKILL.md` has no room for: the user named an initiative, and answering a named initiative with a different one's specification seeds the plan from the wrong document without anything downstream noticing, because the result is internally consistent.
+
+The question, asked once through `AskUserQuestion`, carrying a resolved `spec.md` as its first option:
 
 - Question: "Do you have existing material I should ingest? Local files, URLs, Jira IDs, or pasted text. Skip if not."
 - Header: "Sources"
 - Options:
-  1. "No, proceed without sources" (Recommended when the prompt showed no signal)
-  2. "Yes, I will paste paths/URLs/IDs in my next message"
-  3. "Yes, here is a Jira ticket / URL / file path: ..."
+  1. "Use the spec at docs/product/<slug>/spec.md (<state>)" (Recommended; present only when one resolved)
+  2. "No, proceed without sources" (Recommended instead when no spec resolved and the prompt showed no signal)
+  3. "Yes, I will paste paths/URLs/IDs in my next message"
+  4. "Yes, here is a Jira ticket / URL / file path: ..."
 
-Ask it once. A second ask reads as nagging, and option 1 is the common case.
+Option 1 spells out the resolved `docs/product/<slug>/spec.md` and the state word the call returned for that member, `fresh` or `stale`. A stale spec is still offered: the word is there so the user weighs it, and withholding the offer would decide for them. The option is an offer and only an offer -- that `spec.md` reaches `dp-source-ingest` because the user picked it, never because Phase 1 found it.
+
+Ask it once. A second ask reads as nagging, and proceeding without sources is the common case.
 
 ## Phase 3: agent inputs
 

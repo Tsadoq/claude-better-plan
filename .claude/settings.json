@@ -29,7 +29,11 @@
       "Bash(gh --version)",
       "Bash(gh issue create --help)",
       "Bash(gh label list:*)",
-      "Bash(gh api:*)"
+      "Bash(gh api:*)",
+      "Edit(/skills/deep-plan/**)",
+      "Write(/skills/deep-plan/**)",
+      "Edit(/README.md)",
+      "Bash(uvx --with tiktoken pytest:*)"
     ]
   }
 }

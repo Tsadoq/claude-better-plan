@@ -44,7 +44,7 @@ After approval (and the recommended `/compact`), implement it:
 /deep-plan:deep-plan-execute docs/plans/my-plan   # or name a plan folder / plan.md
 ```
 
-Requires Claude Code >= v2.1.142 for the Task dependency API.
+Requires Claude Code >= v2.1.142 for the Task dependency API. The plugin's skills are invoked one per message, which works at that floor. Stacking several at the start of one message (`/skill-a /skill-b <topic>`) needs Claude Code >= v2.1.199, which expands the first skill plus up to five more; older versions load only the first.
 
 ## The plan folder
 
