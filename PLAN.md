@@ -1,126 +1,78 @@
-<!-- deep-plan-version: 1 -->
+# Design rationale
 
-# Deep Plan Mode for Claude Code
+This document explains *why* the `deep-plan` plugin works the way it does. What the commands do and how to use them is in [README.md](README.md) and `docs/`; this file records the design decisions behind them. The normative source for each workflow is its `SKILL.md` — where this document and a skill body disagree, the skill body wins.
 
-`/deep-plan` is a slash-invoked deep-planning workflow for Claude Code, shipped as the `deep-plan` plugin. It co-designs a non-trivial plan with the user across seven phases, never silently picking between meaningful options, then hands the finished plan to a companion `/deep-plan:deep-plan-execute` command that builds it test-first. It runs in the session's normal permission mode and deliberately does not use Claude Code's native plan mode (see the v0.4 changelog and the History sections for why).
+## The two pipelines
 
-This document describes the **current design** (v0.6 of the plugin: the v0.2 refactor, the v0.3 power features, the v0.4 plan-mode removal, the v0.5 design-review critic fleet, and the v0.6 folder-per-plan artifact set). The superseded flat-file plan layout (v0.4/v0.5) is preserved under `## History (flat-file plan layout)`, the superseded v0.2/v0.3 plan-mode integration under `## History (v0.2/v0.3 plan-mode integration)`, and the original v0.1 design verbatim under `## History (v0.1)` at the end, all for rationale only. Where they conflict, the text above the History headings wins.
-
-## What it does
-
-- Fans research three ways in parallel in Phase 1 (codebase, light web, user-provided sources).
-- Surfaces every meaningful sub-decision as a 3-to-5-option `AskUserQuestion`. Never silently picks.
-- Does targeted deep web research per chosen option in Phase 3, opportunistically using ambient MCP documentation tools when the session exposes them.
-- Runs an adversarial critique (Phase 4.6) that tries to refute the plan before the user approves it.
-- Produces an AI-consumable plan folder that lives in the project: born as `plans_dir/<topic>-draft/` (canonical `plan.md` inside) at the first resolved decision, renamed to `plans_dir/<slug>/` before review. Descriptive slug, structured headings, `TaskCreate`-loadable, code-only TDD embedded, plus a `design.md` member carrying the expanded per-decision rationale and, during execution, per-task implementation notes.
-- Saves the plan to a user-chosen project-local location (default `<repo>/docs/plans/`), never `~/.claude/plans/`.
-- Runs one mode. Every phase states an absolute fan-out and loop bound at its call site, and the Phase 4.6 fan-out is triage-gated so a small plan pays for no critics.
-
-The user is a co-author of the plan, not a reviewer.
-
-## Phase workflow
+The plugin ships two pipelines that meet at one seam:
 
 ```mermaid
-flowchart TD
-    Args["/deep-plan slug:x ..."] --> P0
-    P0[Phase 0: Bootstrap<br/>parse slug, session state] --> P1[Phase 1: Parallel triangulation]
-    P1 --> CP1{Checkpoint 1<br/>scope confirm}
-    CP1 -->|reframe| P1
-    CP1 -->|confirm| P2[Phase 2: Decision surfacing]
-    P2 --> P3[Phase 3: Targeted deep research<br/>+ ambient MCP doc tools]
-    P3 -->|contradiction| P2
-    P3 --> P4[Phase 4: Synthesis & verification]
-    P4 --> P46[Phase 4.6: Adversarial critique<br/>triage-gated critic fleet refutes the plan]
-    P46 -->|material gaps| P4
-    P46 -->|reverses a decision| P2
-    P46 -->|clean| REP["finalize_plan.py --repair<br/>+ draft-to-slug rename"]
-    REP --> CP2{Checkpoint 2<br/>walk plan, THE approval gate}
-    CP2 -->|refine/drop/add| P4
-    CP2 -->|change decision| P2
-    CP2 -->|approve| P5[Phase 5: in-place archive split + handoff]
-    P5 --> Exec["/deep-plan:deep-plan-execute<br/>load_tasks.py -> TaskCreate -> addBlockedBy -> dispatch + scope audit"]
+flowchart LR
+    subgraph product ["product chain"]
+        B[brief] --> D[discovery] --> R[requirements] --> S[spec] --> RM[roadmap] --> I[issues]
+    end
+    S -.->|Phase 1 source| P["/deep-plan"]
+    P --> E["/deep-plan:deep-plan-execute"]
 ```
 
-### Phase 0: Bootstrap
+**Plan-and-build** exists because one-shot planning fails in two ways: the model silently picks between meaningful options, and the resulting plan lives in chat where it can't be executed later. So `/deep-plan` makes every meaningful choice a structured question, and the plan is a file in the repo from the first resolved decision. **The product chain** exists because "what should we build" and "how do we build it" rot when mixed: each chain document answers one question, derived from exactly one upstream, and the spec is the single handoff point into planning.
 
-Parse `$ARGUMENTS` for the optional `slug:` token (there is no native key:value parser); the remainder is the topic. If native plan mode is active, ask the user in one sentence to toggle it off (Shift+Tab) and stop the turn. Run `setup_session.py` to resolve the project root and `plans_dir` (prompting once per project: `docs/plans/` recommended, `.claude/plans/` warned against as a protected path, with a warn-and-offer-to-move sentinel for remembered protected dirs), detect stale `*-draft/` folders (and legacy flat drafts) left by abandoned runs (resume / overwrite / start fresh), and create the per-session sandbox.
+## Why /deep-plan is shaped this way
 
-### Phase 1: Parallel triangulation
+The workflow is six phases (0–5) with two user gates. The reasoning behind the shape:
 
-Launch `dp-explore-codebase` (haiku) and `dp-research-shallow` (haiku) always, plus `dp-source-ingest` (sonnet) when the user supplied source material. Synthesize the findings and confirm scope with the user at Checkpoint 1.
+- **Research before decisions.** Phase 1 fans out three read-only agents in parallel — codebase exploration, a shallow web sweep, source ingestion — because options framed without evidence are guesses. Scope is confirmed with the user before any decision is asked.
+- **Decisions are questions, asked one at a time, in dependency order.** Batching decisions into one multi-select question encourages skimming, and decisions are conditional — choosing Redis forecloses SQLite options downstream. Each answer is appended to the draft plan immediately, so a crashed run never loses a decision. The draft is born at the first question, not before: a plan file with no decisions in it is noise.
+- **Deep research validates choices, never makes them.** Phase 3 runs one researcher per chosen option (cap 4 in parallel) against official docs. A contradiction re-opens the question with the evidence quoted. The alternative — letting research silently override the user — would break the co-authorship contract.
+- **Critique before approval.** Phase 4 drafts once, sweeps six quality lenses inline (no agents — the lenses are cheap), probes assumptions with real shell commands, then Phase 4.6 launches critic agents that try to refute the plan. The fleet is triage-gated: each critic cluster is armed by a concrete signal (a weak test block, a new module boundary, a rewritten design section), so a small plan arms nothing and pays nothing. The bound is absolute — one pass, loop once — because unbounded critique loops burn tokens without converging.
+- **Approval is structural.** One `AskUserQuestion` (approve / refine / drop / add / change a decision) is the only gate. Free-text "looks good?" questions are not gates: they get skimmed. Mechanical finalization runs *before* the question so it cannot be skipped.
+- **Native plan mode is deliberately not used.** Its read-only guarantee is prompt-level anyway, and its injected workflow (plan file, exit approval) competes with this one. Phase 0 asks the user to toggle it off rather than fighting it.
 
-### Phase 2: Decision surfacing
+## Why execute is a dispatcher
 
-Enumerate 2 to 5 sub-decisions worth surfacing, generate option sets inline, and resolve them sequentially in dependency order via `AskUserQuestion`. The draft plan file `plans_dir/<topic>-draft/plan.md` is created when the first decision is asked, and each answer is appended to its `## Decisions made` table as it resolves, so an abandoned run never loses its decisions.
+`/deep-plan:deep-plan-execute` never implements anything itself. It loads the plan's tasks into harness tasks with real dependencies (`TaskCreate`, then `addBlockedBy` — hence the Claude Code >= v2.1.142 floor), then launches exactly one `dp-implement-task` agent per task, in dependency order, in a fresh context each time.
 
-### Phase 3: Targeted deep research
+Two decisions matter here:
 
-Launch one `dp-research-deep` (sonnet) per decision branch, capped at 4 in parallel (waves of 4). A `## Contradiction` in any dossier loops back to Phase 2 for that one decision with the evidence quoted. Skipped entirely when no novelty needs research.
+- **The diff never reaches the dispatcher.** The implementer owns the whole increment — failing test, implementation, its own nested design and test review, a stability re-run, an implementation note — and returns a fixed six-line summary. Keeping the diff one level down keeps the dispatcher's context flat no matter how many tasks run.
+- **Scope is audited from git, not from the agent's report.** The dispatcher compares what git says changed (tracked diff plus new untracked files, minus pre-existing ones) against the task's declared `Target files`. Both halves are needed: a plain diff misses created files; a bare untracked listing would blame pre-existing scratch files. Anything outside the set blocks completion and is reported; nothing is auto-reverted, because reverting user files on a heuristic is worse than asking.
 
-### Phase 4: Synthesis and verification
+Plan discovery honors a durable memo: approval records the plan path in per-project state, so execute finds the right plan even after `/clear`, falling back to the newest plan only when the memo is gone or stale. It refuses to run while the plan has open questions — an open question is an unmade decision, and unmade decisions are the planner's job, not the implementer's.
 
-Generate the slug, rename the draft folder to `plans_dir/<slug>/` at Phase 4.2 behind a fail-closed guard (`test ! -e` on both the folder and the legacy flat form), then draft the plan body once and sweep it against the six synthesis lenses (simplicity, performance, maintainability, minimal-diff, security, deep-modules) from `references/perspectives.md` — one pass per lens, inside the synthesis turn, launching no agents. Seed `<slug>/design.md` from `references/design-md-template.md` with the expanded per-decision rationale and evidence links, and run inline verification probes (writing any fixtures into the sandbox).
+## Why the product chain is a chain
 
-### Phase 4.6: Adversarial critique
+- **Single upstream per document.** Each document derives from exactly its predecessor. The moment a spec can quote the brief directly, the requirements step becomes optional in practice, and untested assumptions flow straight into planning. The chain makes ambiguity get spent at a defined step (requirements), not carried.
+- **Provenance hashes, not timestamps.** Each document records the git blob hash of the upstream version it was derived from. Hashes survive rebases, clones, and touch(1); mtimes don't. Staleness computed this way is a fact about content, not filesystem accidents.
+- **Stale warns, absent blocks.** Only a missing input stops a command. Treating stale as a blocker would make every upstream edit cascade into mandatory regeneration of the whole chain, which punishes iteration.
+- **Unknown markers instead of invented numbers.** A generated market size is worse than a gap: it looks like research. The `[UNKNOWN: ...]` marker names what's missing and who would know, and downstream steps must carry it — a roadmap item resting on an unknown gets no score and cannot be sequenced.
+- **The spec is the only member a planner reads.** `/deep-plan` opens `spec.md` and nothing upstream of it. This forces the spec to be self-contained (requirements carried verbatim, non-goals priced) and keeps the planner's input auditable: one file, one hash.
+- **`issues/` is not a chain member.** The chain is closed at five documents. Issues are a projection of the roadmap into work-sized pieces, they can leave the repo (GitHub), and re-running *adds* rather than replaces — different lifecycle, different rules, so they live outside the family contract.
+- **Filing is dry-run-first.** Creating GitHub issues is the only side effect in the plugin that leaves the repo, so it always shows exactly what would be created, then requires explicit confirmation, and every filed slice gets a ledger entry so re-runs are idempotent.
 
-Arm each critic fleet from a named signal, then run the armed clusters through the recipe's triage gate. A code task with a missing or weak `**Tests (TDD)**` block arms the test fleet; a new module, boundary, or interface arms the design fleet; a new or rewritten `design.md` or `architecture.md` section arms the readability and plan-integrity clusters. A plan arming nothing launches no critics and goes straight to Checkpoint 2.
+## Read-only enforcement
 
-Plan-structure review — missing tasks, wrong or missing dependencies, code tasks lacking tests, decisions contradicted by research, untested assumptions — is carried by the `dp-critic` leaf running over a further cluster source, `references/plan-integrity-principles.md`, rather than by a dedicated agent: that leaf supplies no rubric of its own, so a new cluster source needs no new agent type. Findings are tagged `material` or `minor`. Material findings are fixed inline (or, if they reverse a user decision, loop back to Phase 2 with the contradiction quoted); minor findings go to `## Open questions`. The bound is absolute: one pass, loop once on material findings. Then Checkpoint 2 walks the plan with the user (approve / refine / drop / add / change a decision).
+The planning orchestrator is held read-only by a prompt-level contract: it runs in the session's normal permission mode and may write only the plan folder and a per-session `/tmp` sandbox. There is no tool-level gate on the orchestrator — the harness ignores `permissionMode`, `hooks`, and `mcpServers` on plugin-bundled agents, so a hard sandbox is not available to a plugin.
 
-### Phase 5: Archive and handoff
+The subagents are held read-only differently: each planning `dp-*` agent declares a `disallowedTools` list blocking `Write`, `Edit`, and `NotebookEdit`. The research agents (`dp-research-shallow`, `dp-research-deep`, `dp-source-ingest`) and the critic leaf (`dp-critic`) also disallow `Bash`, leaving them no shell write vector; `dp-explore-codebase` keeps `Bash` for read-only inspection — a residual vector accepted under the trusted-session model. Using `disallowedTools` instead of a `tools` allowlist is deliberate: an allowlist would strip access to ambient MCP documentation tools, which the researchers want.
 
-`finalize_plan.py --repair` auto-normalizes the plan in place BEFORE the Checkpoint 2 question (including regenerating the `## Task overview` table between its markers), so finalization cannot be skipped; Checkpoint 2's `AskUserQuestion` ("Approve and finalize") is the single approval gate. On approval, `finalize_plan.py --archive` rewrites the lean `plans_dir/<slug>/plan.md` in place (source and destination are the same file), stamps `**Status**: approved` and `**Date**` under the title, splits the appendices into the `probes.md` and `research.md` folder members, and regenerates the `plans_dir/README.md` index; the orchestrator then recommends the user run `/compact` before handing the plan to `/deep-plan:deep-plan-execute`.
+**The one exception**: `dp-implement-task` must write — that's its job. It is bounded by the dispatcher's git-based scope audit, a `Workflow` denial in its frontmatter, and a prompt that forbids committing, editing the plan, or touching permission settings. `test_agents_contract.py` pins that the writable set is exactly this one agent, so a second writable agent cannot appear by accident.
 
-## Fan-out bounds
+One consequence is unavoidable: subagents inherit the parent session's permission mode, so in default mode every write inside every implementer prompts. The mitigation is a user-side allowlist in `.claude/settings.json` (documented in `docs/planning.md`), never a bypass flag — plugins cannot ship permissions.
 
-There is one mode. Every phase states its own absolute bound at its call site, and every agent launch is `effort: inherit`:
+## The critic fleet, shared
 
-| Phase | Bound |
-|-------|-------|
-| Phase 1 | explore + shallow always, + source-ingest when the user supplied sources |
-| Phase 3 | one `dp-research-deep` per decision, cap 4, waves of 4; skipped when no novelty exists |
-| Phase 4 | no agents: six lenses swept in the synthesis turn |
-| Phase 4.6 | one pass, loop once on material findings; each fleet armed by signal, then triage-gated |
+One agent (`dp-critic`) serves every review in the plugin. It carries no rubric of its own; the caller hands it a principles file, and the fleet recipe (triage-gate which clusters apply, one critic per armed cluster, adversarially verify each finding) is parametrized the same way. That is why `/design-review`, `/tdd-review`, `/product-review`, deep-plan's Phase 4.6, and the reviews nested inside each executed task are all the same machinery with different rubrics — a new review dimension needs a new principles file, not a new agent.
 
-## Implementation handoff
+## The plan folder
 
-`/deep-plan:deep-plan-execute [plan-path]` is a companion skill in the same plugin. It accepts a plan folder or its `plan.md`; with no argument, discovery first consults the durable approved-plan memo that Phase 5 records at approval (read back via `setup_session.py --lookup`, and honored only while the memoized plan file still exists and carries `**Status**: approved`), and only then falls back to picking the newest plan across both shapes (`<slug>/plan.md` preferred, legacy flat `<slug>.md` still found), excluding the generated README, legacy dotted siblings, and unfinished `*-draft/` folders. It runs `load_tasks.py` to parse the finalized plan's `## Tasks` into structured JSON, refuses to start while `## Open questions` is non-empty, then performs a two-pass load against the harness Task API: pass 1 creates one task per `### Task` (`TaskCreate`), capturing the returned opaque id into an `int -> id` map; pass 2 wires each task's `Depends on` into `addBlockedBy` (`TaskUpdate`).
+A plan is a folder (`plans_dir/<slug>/`) with fixed member names: `plan.md` (canonical, carries `**Status**: draft → approved → executed`), `design.md` (the why, per decision, plus per-task implementation notes appended at execute time), `research.md` and `probes.md` (split out at archive so `plan.md` stays lean), and `architecture.md` only when a significance test passes. The draft is born as `<topic>-draft/`, renamed once behind a fail-closed `test ! -e` guard, and edited in place from then on — there is no mirror copy, so there is nothing to drift.
 
-It then **dispatches** rather than implements. For each task in dependency order it captures a baseline ref, snapshots pre-existing untracked paths, and launches exactly one `dp-implement-task` agent with four scalars: the plan path, the task number, the baseline ref, and a `fleet_mode`. That agent owns the whole increment in a context that is discarded on return — failing test first, implement, verify, its own nested design and test critic fleets over the task diff, material-finding fixes, the post-green stability re-run, and the `design.md` implementation note — and returns a fixed six-line summary. The agent fetches its own task body via `load_tasks.py --task N`, so no field of the plan grammar is re-typed into a prompt.
-
-The dispatcher never sees a diff. Instead it audits scope from git: the union of `git diff --name-only <baseline>` and the post-run untracked listing, minus the pre-dispatch snapshot, compared against the task's `Target files` (plus the plan folder's `design.md`, which the note append targets). Both halves are needed — a plain diff omits newly created files, and a bare untracked listing would wrongly attribute pre-existing scratch files. Any path outside that set blocks completion and is reported to the user; nothing is auto-reverted. When all tasks complete, folder plans get their `**Status**` flipped to `executed` and the index refreshed via `finalize_plan.py --index`. Requires Claude Code >= v2.1.142 for the Task dependency API.
-
-Because the fleet is nested inside the implementer, per-task agent consumption is a range (one implementer plus 8 finders at minimum, but the verify stage launches one agent per surviving finding and is uncapped). `fleet_mode` degrades on the top of that range: `full` up to 8 tasks, `design-only` for 9 to 16, `inline` beyond 16.
-
-`load_tasks.py` reuses the section-slicing helpers (`_header_pos`, `_section_end`, `_section_body`) from `finalize_plan.py` rather than re-implementing them.
-
-## Read-only enforcement (current model)
-
-The orchestrator is held read-only by a prompt-level contract (R1 in SKILL.md): it runs in the session's normal permission mode and may write only the project-local plan file and the per-session sandbox. There is no tool-level gate on the orchestrator; the contract is enforced by the skill text and the checkpoint gates. The planning subagents are **not** held read-only by `permissionMode` -- the harness ignores `permissionMode`, `hooks`, and `mcpServers` on plugin-bundled agents. Instead each planning `dp-*` agent declares a `disallowedTools` list that blocks `Write`, `Edit`, and `NotebookEdit`, reinforced by a read-only system prompt. The research agents (`dp-research-shallow`, `dp-research-deep`, `dp-source-ingest`) also disallow `Bash`, so they have no shell write vector at all; `dp-explore-codebase` keeps `Bash` for read-only inspection. That residual Bash is a theoretical write vector, mitigated by the prompt and the trusted-session model, not a hard sandbox. Every agent also defensively disallows native plan mode's approval tool, since the harness nudges plan-shaped subagents toward it even though the skill never uses plan mode.
-
-**The execute-time exception.** `dp-implement-task` is the one agent that may write, because writing code is its job. It cannot be bounded by a tool block, so it is bounded three other ways: `disallowedTools` denies `Workflow` (whose nesting is capped at one level anyway), the dispatcher audits its changed paths against the task's `Target files` from git's report rather than the agent's self-report, and its own prompt forbids committing, editing `plan.md`, or touching permission settings. `test_agents_contract.py` pins that the writable set is exactly `{dp-implement-task}`, so a second writable agent cannot appear by accident.
-
-One consequence is unavoidable and is documented in the execute skill's `## Preflight`: subagents **inherit** the parent session's permission mode, and since plugin-bundled agents cannot set `permissionMode`, a default-mode run prompts on every `Write`, `Edit`, and `Bash` inside every implementer. The mitigation is a user-side project-local allowlist, not a bypass flag. Restricting which agent types the implementer may spawn would likewise need a user-side `permissions.deny` rule: the parenthesised `Agent(type)` allowlist form is silently ignored inside a subagent definition, and plugins cannot ship permissions.
-
-Dropping the old `tools` allowlist for `disallowedTools` is also what lets the agents reach any ambient MCP documentation tools during research; an explicit `tools` allowlist would have stripped MCP access.
-
-The v0.1 bundled write-guard (`guard_writes.py`, a `PreToolUse` hook) has been removed. The prompt-level contract plus `disallowedTools` are the boundary; only the `Stop` cleanup hook remains.
-
-## Plan file shape
-
-Every plan is a folder: `plans_dir/<slug>/` with fixed member names (`plan.md`, `research.md`, `probes.md`, `design.md`, and -- only for architecturally significant plans per the significance test in `references/architecture-md-template.md` -- `architecture.md`). `plan.md` is the canonical plan, born as `plans_dir/<topic>-draft/plan.md` at the start of Phase 2 (so resolved decisions are crash-safe); the folder is renamed to `plans_dir/<slug>/` at Phase 4.2 behind a fail-closed `test ! -e` dual guard (v0.6 also resolved the repo's old 4.1/4.2 rename naming drift in favour of 4.2), and `plan.md` is edited in place from then on. There is no mirror and no on-approval copy; `finalize_plan.py --archive` rewrites the same file lean in place, stamps `**Status**: approved` and `**Date**` under the title, splits the `## Verification probes` and `## Research dossiers` appendices into the `probes.md` and `research.md` members, and regenerates the `plans_dir/README.md` index (a generated region between `<!-- deep-plan-index:begin generated: do not edit -->` / `<!-- deep-plan-index:end -->` markers; merge conflicts inside it are resolved by regenerating, never by hand). The session state's `plan_path` tracks the current `plan.md` for re-entry detection.
-
-The `design.md` member has a two-phase lifecycle: Phase 4.4 seeds it per the narrative `references/design-md-template.md` -- a `## Background` section, then one plain-language-question section per decision whose body opens with the decision in its first sentence -- and `/deep-plan:deep-plan-execute` appends one terse `### Task {N}` entry under its `## Implementation notes` per completed task, gated after that task's verification passes. The plan's `## Decisions made` table is an index into it: each row's Rationale cell is one clause plus a `[question heading](design.md#anchor)` link, and `finalize_plan.py` warns (never fixes) when such a link resolves to no design.md heading or when any H2/H3 section dangles empty. The Phase 3 dossiers are question-first (`**The question**` / `**The answer**` / `**What we found**` / `**Sources**`, normative home `agents/dp-research-deep.md`), and the plan's `## Research dossiers` appendix opens with a coverage table naming, per decision, its dossier or why it was not researched.
-
-The section order inside `plan.md` is fixed -- Context, Decisions made, Architecture, Tasks, References, Open questions -- plus the generated `## Task overview` region between `<!-- deep-plan-task-overview:begin generated: do not edit -->` / `<!-- deep-plan-task-overview:end -->` markers: a `# | Task | Files | Deps | Summary` table rebuilt by every `--repair` run, whose Summary column is each task's opening plain-English summary sentence (every `**Change**` block must open with one, PEP 257 terminator rule). Each task carries Target files, Change, Verification, and Depends on; the `**Tests (TDD)**` subsection is included only for tasks that create or modify code. `finalize_plan.py --repair` auto-repairs the plan (em-dashes, task headers, missing sections, attribution, the overview region) rather than validating-and-rejecting in a loop.
-
-Discovery is dual-read, folder-write: every consumer reads both shapes (`<slug>/plan.md` preferred, legacy flat `<slug>.md` still found), `resolve_slug.py` treats either form as a collision, new plans are always folders, and legacy flat plans are approved historical records left untouched.
+Generated regions (the `## Task overview` table, the `plans_dir/README.md` index, the `docs/product/README.md` index) live between HTML-comment markers and are regenerated by scripts, never hand-edited; a merge conflict inside one is resolved by regenerating. Legacy flat-file plans from old plugin versions are still discovered read-only, never rewritten.
 
 ## Engineering
 
-The repository root is both plugin and marketplace root. Skills live under `skills/`, agent definitions under `agents/`, shared helpers under `lib/`, and CI-facing tests beside their owning skill or under `tests/` for cross-skill contracts.
+Everything executable is stdlib-only Python, ruff-clean and `mypy --strict` (py312): `setup_session.py`, `finalize_plan.py`, `load_tasks.py`, `resolve_slug.py`, and the `SessionEnd` hook `cleanup.py` under deep-plan; `product_artifact.py` under product-artifacts; six filing modules under product-issues; shared primitives in `lib/artifact_common.py`. `load_tasks.py` is the single owner of the plan grammar — no other component re-parses tasks.
 
-Keep always-resident frontmatter descriptions small, keep invoked workflow instructions within their enforced token budgets, and place optional detail under `references/`. The limits are defined once in `tests/guarantees.py` and enforced by the test suite.
+CI (`.github/workflows/ci.yml`) runs `ruff check lib skills`, `mypy --strict` (scope from `pyproject.toml`), and `python -m pytest -v` (discovery from `pyproject.toml` `testpaths` — 13 entries, contract tests co-located per skill plus cross-skill ones under `tests/`). Contract tests pin behavior, never wording: `GUARANTEES` in `tests/guarantees.py` declares what each shipped file must still do, `BUDGETS` caps what stays resident in context. `README.md` and this file carry no budget — they are never loaded as model context.
 
-Runtime state belongs under `$XDG_STATE_HOME/deep-plan/` and is never tracked. Historical designs and release-by-release rationale remain available in Git history.
-Every helper is stdlib-only Python (`setup_session.py`, `resolve_slug.py`, `finalize_plan.py`, `load_tasks.py`, and the `cleanup.py` Stop hook), ruff-clean and `mypy --strict` compliant, with no runtime dependencies. CI (`.github/workflows/ci.yml`) installs `ruff`, `mypy`, `pytest` (pinned `>=9,<10`), and `tiktoken`, then runs, in order, `ruff check skills`, `mypy --strict skills/deep-plan/scripts skills/deep-plan/hooks`, and bare `python -m pytest -v` — test discovery is owned by `pyproject.toml`'s `[tool.pytest.ini_options]` (`testpaths` plus `--import-mode=importlib`), never by per-caller path lists. `pyproject.toml` pins the gate configuration. Contract tests are co-located per skill: `skills/deep-plan/tests/` covers the golden-plan drift guard, repair/archive (including the generated Task overview and README index), session state, slug normalisation and dual-form collision, the cleanup hook, the read-only agents contract, the `load_tasks` parser (file and folder inputs), the design.md template contract, and the SKILL.md frontmatter/wiring contract; `skills/design-review/tests/` pins the design-principles structure and fleet recipe; `skills/tdd-review/tests/` pins the test-principles rubric and the tdd-review wrapper.
+Releases are cut by the Conventional Commits auto-bump workflow; the version in `.claude-plugin/plugin.json` is never edited by hand. Runtime state lives under `$XDG_STATE_HOME/deep-plan/` and is never tracked. Historical designs and release-by-release rationale live in git history.
