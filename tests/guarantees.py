@@ -446,16 +446,47 @@ GUARANTEES: tuple[Guarantee, ...] = (
         {"patterns": (r"\*/plan\.md", r"README", r"-draft/plan")},
     ),
     Guarantee(
-        "execute-skill.audits-task-scope-with-both-halves-of-the-diff",
+        "execute-skill.baseline-is-the-scope-audit-script",
+        EXECUTE_SKILL,
+        "anchor_regex",
+        {"patterns": (r"scope_audit\.py snapshot",)},
+    ),
+    Guarantee(
+        "execute-skill.no-stash-baseline",
+        EXECUTE_SKILL,
+        "anchor_regex",
+        {"patterns": (r"git stash create",), "absent": True},
+    ),
+    Guarantee(
+        "execute-skill.audits-task-scope-against-the-declared-targets",
         EXECUTE_SKILL,
         "anchor_regex",
         {
             "patterns": (
-                r"git ls-files --others --exclude-standard",
-                r"git diff --name-only",
+                r"scope_audit\.py audit",
+                r"--targets",
+                r"--allow",
                 r"deep-plan:dp-implement-task",
                 r"design\.md",
             )
+        },
+    ),
+    Guarantee(
+        "execute-skill.dispatcher-runs-the-fleet",
+        EXECUTE_SKILL,
+        "anchor_regex",
+        {
+            "region": ("## Step 5", "## Subagent budget"),
+            "patterns": (r"fleet-orchestration\.md", r"findings"),
+        },
+    ),
+    Guarantee(
+        "execute-skill.routes-material-and-minor-findings",
+        EXECUTE_SKILL,
+        "anchor_regex",
+        {
+            "region": ("## Step 5", "## Subagent budget"),
+            "patterns": (r"material.*re-dispatch.*findings", r"minor.*design\.md"),
         },
     ),
     Guarantee(
@@ -492,10 +523,30 @@ GUARANTEES: tuple[Guarantee, ...] = (
         {"patterns": (r"projects\.json", r"XDG_STATE_HOME"), "absent": True},
     ),
     Guarantee(
-        "execute-skill.does-not-launch-critics-itself",
+        "execute-skill.launches-the-critic-by-agent-type",
         EXECUTE_SKILL,
         "anchor_regex",
-        {"patterns": (r"dp-[a-z-]*critic",), "absent": True},
+        {"region": ("## Step 5", "## Subagent budget"), "patterns": (r"deep-plan:dp-critic",)},
+    ),
+    Guarantee(
+        "execute-skill.cites-the-design-red-flags",
+        EXECUTE_SKILL,
+        "path_exists",
+        {
+            "region": ("## Step 5", "## Subagent budget"),
+            "target": DESIGN_PRINCIPLES,
+            "cited_as": "design-principles.md",
+        },
+    ),
+    Guarantee(
+        "execute-skill.cites-the-tests-red-flags",
+        EXECUTE_SKILL,
+        "path_exists",
+        {
+            "region": ("## Step 5", "## Subagent budget"),
+            "target": TEST_PRINCIPLES,
+            "cited_as": "test-principles.md",
+        },
     ),
     Guarantee(
         "fleet-recipe.section-spine",

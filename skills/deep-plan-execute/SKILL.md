@@ -133,65 +133,82 @@ as an aside, not even if the prompting is severe.
 
 Two related bounds, so nobody looks for a shipped control that does not exist:
 
-- Restricting which agent types the implementer may spawn needs a **user-side**
-  `permissions.deny` rule. The parenthesised `Agent(type)` allowlist form is
-  silently ignored inside a subagent definition, and plugins cannot ship
+- The implementer ships with `Agent` denied outright, so it spawns nothing at all.
+  Restricting *which* types some other subagent may spawn would need a
+  **user-side** `permissions.deny` rule: the parenthesised `Agent(type)` allowlist
+  form is silently ignored inside a subagent definition, and plugins cannot ship
   permissions at all.
-- What this plugin *does* ship is the `Workflow` denial in the agent's frontmatter
-  plus the dispatcher's scope audit in Step 5. That is the whole enforcement
-  surface; the rest is the trusted-session model.
+- What this plugin *does* ship is that denial plus the `Workflow` one in the
+  agent's frontmatter, and the dispatcher's scope audit in Step 5. That is the
+  whole enforcement surface; the rest is the trusted-session model.
 
-## Step 5: Dispatch each task, then audit its scope
+## Step 5: Dispatch each task, audit its scope, then review its diff
 
 You do not implement tasks. One `dp-implement-task` agent implements each one in a
-fresh context that is discarded on return, so the diff, the test output, and the
-critic findings never enter your context at all. You own the task graph, the
-dispatch order, and the scope audit.
+fresh context that is discarded on return, so the test output, the turn-by-turn
+reasoning and the file contents never enter your context at all. You own the task
+graph, the dispatch order, the scope audit, and the review of what came back.
+
+Trust nothing you did not see. The agent's summary says what it believes it did;
+the audit and the fleet below are how you find out.
 
 Process tasks in topological order (a task runs only after every task it is
-blocked by is done). For each task, six moves:
+blocked by is done). For each task, seven moves:
 
 1. **Mark it `in_progress`** via `TaskUpdate`.
-2. **Capture the baseline ref**: `git stash create`. Empty output means the tree
-   is clean, so use `HEAD`.
-3. **Snapshot pre-existing untracked paths**:
+2. **Take the baseline.**
 
    ```
-   git ls-files --others --exclude-standard
+   python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/scope_audit.py snapshot --root <project root>
    ```
 
-   Keep this list. Without it the audit in move 5 would blame the task for every
-   scratch file already sitting in the user's tree.
-4. **Launch exactly one `deep-plan:dp-implement-task`**, passing only four
-   scalars: the plan path, the task number, the baseline ref, and `fleet_mode`
-   (see `## Subagent budget`). Do not re-type the task's fields into the prompt --
-   the agent fetches its own task body with `load_tasks.py --task <n>`, which
-   keeps plan grammar owned by one function. Then read its six-line summary. That
-   summary is all you get, and all you need.
-5. **Audit the task's scope.** Build the task-attributable path set:
+   It prints `{baseline, untracked}`: an unreachable commit recording the working
+   tree as it stands, plus the paths that were already untracked when it was taken,
+   so the audit cannot blame the task for scratch files that predate it. Keep that
+   JSON verbatim -- moves 4 and 5 hand it straight back. Never take the baseline
+   through `git stash`: it refuses whenever the index disagrees with disk, and the
+   documented "empty output means the tree is clean, use `HEAD`" fallback then
+   attributes every pre-existing edit to the task.
+3. **Launch exactly one `deep-plan:dp-implement-task`**, passing three scalars: the
+   plan path, the task number, and the snapshot's `baseline`. Do not re-type the
+   task's fields into the prompt -- the agent fetches its own task body with
+   `load_tasks.py --task <n>`, which keeps plan grammar owned by one function.
+4. **Read the five-line summary.** If the returned text does not carry one, resume
+   that agent once, asking for the summary alone. If it is still missing, run
+   `scope_audit.py changed --root <project root> --snapshot '<the move-2 JSON>'`,
+   report the paths it names, and mark the task blocked. Silence is not evidence
+   that nothing was written.
+5. **Audit the task's scope.**
 
    ```
-   git diff --name-only <baseline>
-   git ls-files --others --exclude-standard
+   python3 ${CLAUDE_PLUGIN_ROOT}/skills/deep-plan/scripts/scope_audit.py audit \
+     --root <project root> --snapshot '<the move-2 JSON>' \
+     --targets '<the task's Target files, comma-separated>' \
+     --allow '<plan folder>/design.md'
    ```
 
-   The set is the union of those two, MINUS the move-3 snapshot. Both halves are
-   required: a plain diff omits files the task newly created, while a bare
-   untracked listing would wrongly attribute pre-existing scratch files.
+   It exits non-zero and prints `{ok: false, unexpected: [...]}` when a changed path
+   is outside that set. `--allow` carries the plan folder's own `design.md` because
+   the agent's implementation note targets it. On a finding, do NOT complete the
+   task: report the offending paths to the user and stop. Never auto-revert -- the
+   edit may be correct and the plan wrong, and that is the user's call.
+6. **Review the diff.** With a clean audit, run the critic fleet from this thread
+   per `${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/fleet-orchestration.md`,
+   with `deep-plan:dp-critic` as the leaf. The review target is `git diff <baseline>`
+   plus the contents of the files the task created. Run it against two cluster
+   sources: `${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/design-principles.md`
+   and `${CLAUDE_PLUGIN_ROOT}/skills/tdd-review/references/test-principles.md`, as
+   `fleet_mode` selects (see the `Subagent budget` section).
+   A `material` finding re-dispatches this task's implementer once, with those findings as its `findings` input, then re-runs moves 4 to 6.
+   `minor` findings are appended to the task's entry in the plan folder's `design.md`.
+7. **Complete or block.** With a clean audit, a `status: done` summary and no
+   surviving `material` finding, mark the task `completed`. On `status: blocked`, a
+   failed audit, or a second fleet run that still returns `material` findings, stop
+   and report rather than expanding scope or re-dispatching again.
 
-   Compare that set against the task's `Target files`. The plan folder's own
-   `design.md` is always in scope, since the agent's implementation note targets
-   it. If any path remains outside, do NOT complete the task: report the
-   offending paths to the user and stop. Never auto-revert -- the edit may be
-   correct and the plan wrong, and that is the user's call.
-6. **Complete or block.** With a clean audit and a `status: done` summary, mark
-   the task `completed`. On `status: blocked`, or a failed audit, stop and report
-   rather than expanding scope or re-dispatching blindly.
-
-The agent owns everything inside the increment: the failing test first, the red
-and green runs, the execute-time run and craft rules, the task-scoped diff, its
-own nested design and test critic fleets, the material-finding fixes, the
-stability re-run, and the `design.md` note append. All of it is specified in
+The agent owns everything inside the increment: the failing test first, the red and
+green runs, the execute-time run and craft rules, its own self-check over the diff,
+the stability re-run, and the `design.md` note append. All of it is specified in
 `agents/dp-implement-task.md`; do not restate it here and do not do it yourself.
 
 Verification commands run exactly as the plan writes them. If one assumes `uv run`
@@ -204,19 +221,22 @@ Delegation spends subagents, and the caps count nested children. They live in
 `${CLAUDE_PLUGIN_ROOT}/skills/design-review/references/fleet-orchestration.md`
 under `## Session agent budget`: **200 subagents** per session and 20 concurrent.
 
-Do the arithmetic honestly. One implementer plus 8 finders is 9 agents per task at
-minimum, but the fleet's verify stage launches one agent per surviving deduped
-finding and is uncapped, so a task with many findings can pass 20. The per-task
-figure is a **range of 9 to roughly 20**, not a fixed 12 -- so derive thresholds
-from the top of the range, never the bottom.
+Do the arithmetic honestly. A task costs one implementer plus the fleet you launch
+over its diff: 9 agents at minimum, but the fleet's verify stage launches one agent
+per surviving deduped finding and is uncapped, so a task with many findings can pass
+20. The per-task figure is a **range of 9 to roughly 20**, not a fixed 12 -- so
+derive thresholds from the top of the range, never the bottom. A `material` finding
+buys a second implementer and a second fleet for that task, which the range does not
+price.
 
-Pick `fleet_mode` from the parsed task count before the first dispatch:
+Pick `fleet_mode` from the parsed task count before the first dispatch. It selects
+the fleet **you** run in move 6; the implementer is never told it:
 
-| Tasks | `fleet_mode` | What the implementer runs |
-|-------|--------------|---------------------------|
-| up to 8 | `full` | both nested fleets, all clusters |
-| 9 to 16 | `design-only` | the four design clusters as a fleet; tests reviewed inline |
-| more than 16 | `inline` | no nested fleet; the implementer reviews its own diff |
+| Tasks | `fleet_mode` | What you run in move 6 |
+|-------|--------------|------------------------|
+| up to 8 | `full` | both fleets, all clusters |
+| 9 to 16 | `design-only` | the design clusters as a fleet; you read the tests yourself against `test-principles.md` |
+| more than 16 | `inline` | no fleet; you read the diff yourself against both cluster sources |
 
 Announce the chosen mode and its reason in one sentence before dispatching the
 first task. If a blocked task forces a re-dispatch, that consumes budget the
@@ -253,4 +273,6 @@ the README index.
 - Marking a task completed without its design.md implementation note (folder plans).
 - Implementing a task in the dispatcher context instead of dispatching it.
 - Marking a task completed with an unaudited diff.
-- Reading a diff in the orchestrator; the whole point is that it stays below.
+- Marking a task completed without running the fleet over its diff.
+- Taking the baseline by hand instead of through the scope-audit script.
+- Trusting a summary line in place of the audit or the fleet that would check it.
