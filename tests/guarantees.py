@@ -34,7 +34,9 @@ kinds of evidence cover the inventory:
 Not asserted here, deliberately: the per-agent `disallowedTools`/`tools`
 profile (owned by `skills/deep-plan/tests/test_agents_contract.py`, except the
 merged critic leaf's exact profile, which its sibling `test_guarantees.py`
-pins), the
+pins, and the implementer's `Agent` denial, which is asserted here because it
+is what makes the rest of that agent's prose true -- the guarantee below and
+`test_agents_contract.py` both hold it, from opposite ends), the
 `**Tests (TDD)**` field order (owned by
 `skills/deep-plan/tests/test_template_contract.py` against
 `finalize_plan.TESTS_FIELDS`), and the literal-ordering asserts inside
@@ -751,28 +753,22 @@ GUARANTEES: tuple[Guarantee, ...] = (
         {"target": DESIGN_PRINCIPLES},
     ),
     Guarantee(
-        "implement-task-agent.cites-the-fleet-recipe",
-        IMPLEMENT_TASK_AGENT,
-        "path_exists",
-        {"target": FLEET_RECIPE, "cited_as": "fleet-orchestration.md"},
-    ),
-    Guarantee(
         "implement-task-agent.loads-its-task-with-load-tasks",
         IMPLEMENT_TASK_AGENT,
         "script_invoked",
         {"script": "load_tasks.py", "flag": "--task"},
     ),
     Guarantee(
-        "implement-task-agent.launches-the-critic-by-agent-type",
+        "implement-task-agent.never-launches-agents",
         IMPLEMENT_TASK_AGENT,
         "anchor_regex",
-        {"patterns": (r"deep-plan:dp-critic",)},
+        {"patterns": (r"(?m)^disallowedTools:.*\bAgent\b",)},
     ),
     Guarantee(
-        "implement-task-agent.honours-the-dispatchers-fleet-mode",
+        "implement-task-agent.names-no-critic-agent-type",
         IMPLEMENT_TASK_AGENT,
         "anchor_regex",
-        {"patterns": (r"fleet_mode", r"run_in_background: false")},
+        {"patterns": (r"deep-plan:dp-critic",), "absent": True},
     ),
     Guarantee(
         "plan-template.names-every-folder-member",
