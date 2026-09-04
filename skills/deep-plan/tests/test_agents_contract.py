@@ -95,8 +95,10 @@ def test_implement_task_is_the_only_writable_agent() -> None:
         f"{path.name}: must disallow Workflow -- workflow() nesting is capped at one "
         "level, and the fleet recipe would otherwise prefer that path"
     )
-    assert "Agent" not in disallowed, (
-        f"{path.name}: must NOT disallow Agent -- it runs its own nested critic fleet"
+    assert "Agent" in disallowed, (
+        f"{path.name}: must disallow Agent -- a fleet launched from inside a subagent "
+        "runs detached and reports zero findings, so the critic fleet over this "
+        "agent's diff belongs to the dispatcher that launched it"
     )
 
     for key in ("description", "model", "effort", "maxTurns"):

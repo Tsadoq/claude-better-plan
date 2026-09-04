@@ -34,7 +34,7 @@ The workflow is six phases (0–5) with two user gates. The reasoning behind the
 
 Two decisions matter here:
 
-- **The diff never reaches the dispatcher.** The implementer owns the whole increment — failing test, implementation, its own nested design and test review, a stability re-run, an implementation note — and returns a fixed six-line summary. Keeping the diff one level down keeps the dispatcher's context flat no matter how many tasks run.
+- **The diff never reaches the dispatcher.** The implementer owns the increment — failing test, implementation, a stability re-run, an implementation note — and returns a fixed five-line summary. Keeping the diff one level down keeps the dispatcher's context flat no matter how many tasks run. The critic fleet runs from the dispatcher rather than inside the implementer, because a nested agent's completions do not reliably reach the main thread.
 - **Scope is audited from git, not from the agent's report.** The dispatcher compares what git says changed (tracked diff plus new untracked files, minus pre-existing ones) against the task's declared `Target files`. Both halves are needed: a plain diff misses created files; a bare untracked listing would blame pre-existing scratch files. Anything outside the set blocks completion and is reported; nothing is auto-reverted, because reverting user files on a heuristic is worse than asking.
 
 Plan discovery honors a durable memo: approval records the plan path in per-project state, so execute finds the right plan even after `/clear`, falling back to the newest plan only when the memo is gone or stale. It refuses to run while the plan has open questions — an open question is an unmade decision, and unmade decisions are the planner's job, not the implementer's.

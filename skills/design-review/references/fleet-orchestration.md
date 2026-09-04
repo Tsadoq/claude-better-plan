@@ -127,12 +127,12 @@ Normative whenever the Workflow tool is absent, denied, or errors. Same shape, d
 
 ## Nested fleets
 
-A fleet may be launched by a subagent rather than by the main thread — the deep-plan-execute implementer runs its own post-task review this way, so the diff never crosses back up to the dispatcher. A nested caller has two extra obligations:
+Every fleet in this plugin is launched from the main thread. No subagent launches one, and the deep-plan-execute implementer — which used to review its own diff this way — no longer holds the `Agent` tool; its dispatcher runs the fleet over the returned diff instead. Two things forced that:
 
-- **Pass `run_in_background: false` on every `Agent` launch.** Subagents default to *background*, and a backgrounded launch returns an acknowledgement rather than a result. A fleet whose finders were backgrounded reports zero findings and looks like a clean review, which is the worst available failure mode.
-- **Take the `## Fallback` path directly; do not attempt the Workflow path.** `workflow()` nesting is capped at one level, so a nested Workflow call throws. This is the one case where skipping the Workflow attempt is correct rather than a shortcut.
+- **A subagent's children run detached from the conversation that needs them.** Launches from inside a subagent default to *background*, and a backgrounded launch returns an acknowledgement rather than a result, so a nested fleet reports zero findings and looks like a clean review — the worst available failure mode. `run_in_background: false` is the documented cure and still binds every main-thread caller, but a completion notification from a nested child routes to the main conversation rather than to the subagent waiting on it (anthropics/claude-code issue 75043), so the nested caller can be left waiting on a result it will never be handed.
+- **Namespaced agent-type resolution from inside a subagent is unverified.** The one probe on record ran from a main thread (see `## agentType resolution`).
 
-Namespaced agent-type resolution *from inside a subagent* is unverified: the one probe on record ran from a main thread (see `## agentType resolution`), and it named the predecessor of today's `deep-plan:dp-critic`. If a launch fails to resolve, degrade to inline self-review against the same cluster questions and say so in the return summary. Never let a resolution failure become a skipped review.
+A subagent that still needs its own work reviewed reads it against the same cluster questions itself and says so in its summary. That is the only reviewing a subagent does here; the fleet waits for the thread that launched it.
 
 ## Session agent budget
 

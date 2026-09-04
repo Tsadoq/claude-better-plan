@@ -83,6 +83,19 @@ def test_docs_plans_recommended_and_protected_sentinel() -> None:
         shutil.rmtree(Path("/tmp") / f"deep-plan-{sid}", ignore_errors=True)
 
 
+def test_a_project_living_under_a_dot_claude_directory_is_not_flagged(tmp_path: Path) -> None:
+    root = tmp_path / ".claude" / "proj"
+    ordinary = root / "docs" / "plans"
+    protected = root / ".claude" / "plans"
+
+    assert not setup._is_protected_plans_dir(ordinary, root), (
+        f"{ordinary} holds no .claude segment below the project root"
+    )
+    assert setup._is_protected_plans_dir(protected, root), (
+        f"{protected} sits under the project's own .claude directory"
+    )
+
+
 def test_update_plans_dir_persists_and_creates_dir() -> None:
     sid = "pytest-update-plansdir"
     boot = types.SimpleNamespace(session_id=sid)

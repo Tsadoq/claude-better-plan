@@ -325,21 +325,18 @@ def test_prompts_fragment_cites_the_fleet_recipe() -> None:
 def test_execute_audits_task_scope_before_completion() -> None:
     text = EXECUTE_SKILL.read_text()
 
-    untracked = "git ls-files --others --exclude-standard"
-    diff_names = "git diff --name-only"
+    snapshot = "scope_audit.py snapshot"
+    audit = "scope_audit.py audit"
     dispatch = "deep-plan:dp-implement-task"
+    review = "fleet-orchestration.md"
     completion = "## Step 6"
-
-    assert text.count(untracked) >= 2, (
-        f"expected both a pre-dispatch snapshot and a post-run listing of {untracked!r}, "
-        f"found {text.count(untracked)} occurrence(s)"
-    )
 
     source = "deep-plan-execute SKILL.md"
     for earlier, later in (
-        (untracked, dispatch),
-        (dispatch, diff_names),
-        (diff_names, completion),
+        (snapshot, dispatch),
+        (dispatch, audit),
+        (audit, review),
+        (review, completion),
     ):
         assert _offset(text, earlier, source) < _offset(text, later, source), (
             f"{earlier!r} must appear before {later!r} in the dispatch loop"

@@ -128,9 +128,15 @@ def test_phase46_design_fleet_wiring() -> None:
 
 
 def test_execute_post_task_review_wiring() -> None:
-    agent = (ROOT / "agents" / "dp-implement-task.md").read_text()
+    dispatcher = (ROOT / "skills" / "deep-plan-execute" / "SKILL.md").read_text()
     for needle in ("deep-plan:dp-critic", "design-principles.md", "test-principles.md"):
-        assert needle in agent, f"dp-implement-task.md must reference {needle!r}"
+        assert needle in dispatcher, f"deep-plan-execute SKILL.md must reference {needle!r}"
+
+    agent = (ROOT / "agents" / "dp-implement-task.md").read_text()
+    assert "dp-critic" not in agent, (
+        "dp-implement-task.md must not name the critic leaf: it holds no Agent tool, "
+        "and the fleet over its diff runs from the dispatcher's own thread"
+    )
 
 
 if __name__ == "__main__":

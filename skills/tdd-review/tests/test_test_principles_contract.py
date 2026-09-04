@@ -122,8 +122,15 @@ def test_phase46_launches_test_critic_fleet() -> None:
 
 def test_execute_loop_quotes_run_rules_and_rechecks_stability() -> None:
     agent = (ROOT / "agents" / "dp-implement-task.md").read_text()
-    for needle in ("dp-critic", "Execute-time run rules", "Execute-time craft rules"):
+    for needle in ("Execute-time run rules", "Execute-time craft rules"):
         assert needle in agent, f"dp-implement-task.md must reference {needle!r}"
+
+    dispatcher = (ROOT / "skills" / "deep-plan-execute" / "SKILL.md").read_text()
+    assert "test-principles.md" in dispatcher, (
+        "the fleet that reviews an implemented task moved to the dispatcher, so "
+        "deep-plan-execute SKILL.md is where its test cluster source must now be "
+        "named; one critic type serves every fleet, so the source is the wiring"
+    )
 
     red_pos = agent.index("Prove red")
     green_pos = agent.index("Prove green")
