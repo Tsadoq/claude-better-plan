@@ -8,10 +8,18 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from finalize_plan import _header_pos, _section_body, _section_end, resolve_plan_path
+from finalize_plan import (
+    PLAN_FILE_NAME,
+    _header_pos,
+    _section_body,
+    _section_end,
+    resolve_plan_path,
+)
+from setup_session import APPROVED_STATUS_LINE
 
 _LABEL_RE = re.compile(r"^\*\*(?P<label>[^*]+)\*\*:[ \t]*(?P<inline>.*)$", re.MULTILINE)
 _TASK_HEADER_RE = re.compile(r"^### Task (\d+):[ \t]*(.*)$", re.MULTILINE)
+_STATUS_LINE_RE = re.compile(r"^\*\*Status\*\*:.*$", re.MULTILINE)
 
 
 def parse_depends_on(value: str) -> list[int]:
@@ -118,6 +126,21 @@ def parse_plan(text: str) -> dict[str, Any]:
     }
 
 
+def _unapproved_error(plan: Path, text: str) -> str | None:
+    """Refusal message for a folder plan that is not approved, else None.
+
+    Only a `<slug>/plan.md` member is checked, whichever way its path was
+    resolved: the Status line is stamped by the folder-plan template, and a
+    flat legacy `<slug>.md` never carried one. The message quotes the plan's
+    own `**Status**` line, or `missing` when it has none.
+    """
+    if plan.name != PLAN_FILE_NAME or APPROVED_STATUS_LINE in text:
+        return None
+    m = _STATUS_LINE_RE.search(text)
+    found = m.group(0).strip() if m else "missing"
+    return f"plan is not approved: Status line is '{found}'"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="parse a deep-plan plan file into structured JSON")
     parser.add_argument(
@@ -128,6 +151,11 @@ def main() -> int:
         type=int,
         help="emit only this task number, for a single-task implementer",
     )
+    parser.add_argument(
+        "--allow-unapproved",
+        action="store_true",
+        help="parse a folder plan that does not carry the approved Status line",
+    )
     args = parser.parse_args()
 
     plan = resolve_plan_path(Path(args.plan).expanduser().resolve())
@@ -135,7 +163,14 @@ def main() -> int:
         print(json.dumps({"ok": False, "error": f"plan file not found: {plan}"}))
         return 1
 
-    parsed = parse_plan(plan.read_text())
+    text = plan.read_text()
+    if not args.allow_unapproved:
+        error = _unapproved_error(plan, text)
+        if error:
+            print(json.dumps({"ok": False, "error": error}))
+            return 1
+
+    parsed = parse_plan(text)
 
     if args.task is not None:
         selected = next((t for t in parsed["tasks"] if t["n"] == args.task), None)

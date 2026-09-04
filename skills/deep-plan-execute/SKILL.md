@@ -24,6 +24,8 @@ TodoWrite-style checklist and tell the user dependency wiring is degraded.
 
 1. If `$ARGUMENTS` names a path, use it as the plan file. A plan folder is
    accepted as-is: `load_tasks.py` resolves a folder to its `plan.md` member.
+   An explicit path is no shortcut past approval: it goes through the same
+   Step 2 gate as a looked-up one.
 2. Otherwise, run the documented lookup:
 
    ```
@@ -61,6 +63,14 @@ It prints JSON `{ok, tasks, decisions, open_questions, plan}`. Each task is
 `{n, subject, target_files, change, tests, verification, depends_on:[int]}`.
 `tests` is `null` for docs/config tasks. If `ok` is false (no tasks parsed),
 stop and tell the user the plan has no `## Tasks` to execute.
+
+The parser refuses a folder plan whose `plan.md` does not carry
+`**Status**: approved`, printing `{ok: false, error: "plan is not approved:
+..."}` and exiting 1. That means the plan never reached Phase 5 approval, so
+stop and send the user back to `/deep-plan` rather than executing a draft.
+Append `--allow-unapproved` only when the user is deliberately re-running a
+plan they have already approved and since edited. A legacy flat plan
+(`<slug>.md` outside a folder) has no Status line and is never checked.
 
 ## Step 3: Gate on open questions
 

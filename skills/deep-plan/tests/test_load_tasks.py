@@ -31,11 +31,86 @@ def _run_main(argv: list[str]) -> tuple[int, dict[str, Any]]:
     return code, json.loads(buf.getvalue())
 
 
+def _minimal_plan(status_line: str) -> str:
+    """One-task plan body, with `status_line` (may be empty) under the title."""
+    return "\n".join(
+        [
+            "# Minimal plan",
+            "",
+            status_line,
+            "",
+            "## Tasks",
+            "",
+            "### Task 1: Do the thing",
+            "",
+            "**Target files**:",
+            "- a.py (modify)",
+            "",
+            "**Change**: do the thing.",
+            "",
+            "**Verification**: `true`",
+            "",
+            "**Depends on**: none",
+            "",
+        ]
+    )
+
+
+def test_a_folder_plan_without_the_approved_status_line_is_refused() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        folder = Path(d) / "unapproved"
+        folder.mkdir()
+        (folder / "plan.md").write_text(_minimal_plan("**Status**: draft"))
+
+        code, payload = _run_main(["--plan", str(folder)])
+
+        assert code == 1, "draft plan was not refused"
+        assert payload["ok"] is False, "draft plan was not refused"
+        assert "draft" in payload["error"], (
+            f"refusal does not quote the Status line: {payload['error']}"
+        )
+
+
+def test_allow_unapproved_overrides_the_refusal() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        folder = Path(d) / "unapproved"
+        folder.mkdir()
+        (folder / "plan.md").write_text(_minimal_plan("**Status**: draft"))
+
+        code, payload = _run_main(["--plan", str(folder), "--allow-unapproved"])
+
+        assert code == 0, "--allow-unapproved did not override"
+        assert payload["ok"] is True, "--allow-unapproved did not override"
+
+
+def test_an_approved_folder_plan_passes() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        folder = Path(d) / "approved"
+        folder.mkdir()
+        (folder / "plan.md").write_text(_minimal_plan("**Status**: approved"))
+
+        code, payload = _run_main(["--plan", str(folder)])
+
+        assert code == 0, "an approved folder plan must parse"
+        assert payload["ok"] is True, "an approved folder plan must parse"
+
+
+def test_a_flat_legacy_plan_without_a_status_line_passes() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        flat = Path(d) / "flat.md"
+        flat.write_text(_minimal_plan(""))
+
+        code, payload = _run_main(["--plan", str(flat)])
+
+        assert code == 0, "a flat legacy plan must never be approval-checked"
+        assert payload["ok"] is True, "a flat legacy plan must never be approval-checked"
+
+
 def test_load_tasks_accepts_folder_path() -> None:
     with tempfile.TemporaryDirectory() as d:
         folder = Path(d) / "rate-limiter"
         folder.mkdir()
-        (folder / "plan.md").write_text(GOLDEN.read_text())
+        (folder / "plan.md").write_text(f"**Status**: approved\n\n{GOLDEN.read_text()}")
 
         code_dir, from_dir = _run_main(["--plan", str(folder)])
         code_file, from_file = _run_main(["--plan", str(folder / "plan.md")])
