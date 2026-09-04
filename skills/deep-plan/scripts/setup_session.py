@@ -127,9 +127,19 @@ def candidate_plans_dirs(project_root: Path) -> list[dict[str, str]]:
     ]
 
 
-def _is_protected_plans_dir(path: str | Path) -> bool:
-    """True when the plans dir resolves under a `.claude/` directory."""
-    return ".claude" in Path(path).parts
+def _is_protected_plans_dir(path: str | Path, project_root: str | Path) -> bool:
+    """True when the plans dir sits under a `.claude/` directory of the project's own.
+
+    Only the segments below the deepest ancestor the two paths share are examined: a
+    `.claude` on the way to the project itself belongs to whoever installed it there,
+    and a project checked out under one is not writing to a protected path.
+    """
+    parts = Path(path).parts
+    root_parts = Path(project_root).parts
+    shared = 0
+    while shared < min(len(parts), len(root_parts)) and parts[shared] == root_parts[shared]:
+        shared += 1
+    return ".claude" in parts[shared:]
 
 
 def state_file_for(session_id: str) -> Path:
@@ -191,7 +201,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
     }
     write_state(args.session_id, state)
 
-    protected = bool(plans_dir) and _is_protected_plans_dir(str(plans_dir))
+    protected = bool(plans_dir) and _is_protected_plans_dir(str(plans_dir), project_root)
     return {
         **state,
         "sentinels": {
