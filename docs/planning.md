@@ -65,7 +65,7 @@ flowchart LR
     AU -->|no| X[blocked, reported to you]
 ```
 
-Each task goes to one `dp-implement-task` agent in a fresh context. That agent owns the whole increment: write the failing test, implement, verify, run its own design and test review over the diff, re-run tests once more to catch flakes, note what it did in `design.md`, and return a six-line summary. The dispatcher never reads the diff — it asks git what actually changed and compares that against the task's declared `Target files`. Any file outside that set blocks completion and is reported to you; nothing is auto-reverted.
+Each task goes to one `dp-implement-task` agent in a fresh context. That agent owns the increment: write the failing test, implement, verify, re-run tests once more to catch flakes, note what it did in `design.md`, and return a five-line summary. It launches no agents of its own; the dispatcher runs the critic fleet over the diff. The dispatcher never reads the diff — it asks git what actually changed and compares that against the task's declared `Target files`. Any file outside that set blocks completion and is reported to you; nothing is auto-reverted.
 
 When all tasks finish, the plan's status flips to `executed` and the index refreshes.
 
