@@ -1,6 +1,6 @@
 {
   "name": "deep-plan",
-  "version": "0.21.1",
+  "version": "0.22.0",
   "description": "Deep planning and product-shaping skills: research, decisions put to you, and a TDD-embedded plan file in your repo.",
   "private": true,
   "keywords": [
