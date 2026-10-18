@@ -21,7 +21,7 @@ jobs:
         run: pip install ruff mypy "pytest>=9,<10" tiktoken
 
       - name: Lint (ruff)
-        run: ruff check lib skills
+        run: ruff check lib skills tools hosts
 
       - name: Type-check (mypy --strict)
         run: mypy --strict

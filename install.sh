@@ -6,10 +6,10 @@
 #   ./install.sh --uninstall [skills-dir]
 #   curl -fsSL https://raw.githubusercontent.com/tsadoq/claude-better-plan/main/install.sh | bash
 #
-# The full plugin (skills, agents, lib, PLAN.md) goes to $DEEP_PLAN_HOME
-# (default: ${XDG_DATA_HOME:-~/.local/share}/deep-plan) with every
-# ${CLAUDE_PLUGIN_ROOT} rewritten to that path, since only Claude Code sets the
-# variable. Each skill folder is then copied into the skills folder you name.
+# The generic build (dist/generic: skills, agents, lib, HOST.md, PLAN.md) goes to
+# $DEEP_PLAN_HOME (default: ${XDG_DATA_HOME:-~/.local/share}/deep-plan) with its
+# plugin-root placeholder rewritten to that path in every .md. Each skill folder
+# is then copied into the skills folder you name.
 
 set -euo pipefail
 
@@ -60,20 +60,21 @@ script_path="${BASH_SOURCE[0]:-}"
 if [ -n "$script_path" ] && [ -f "$script_path" ]; then
   src="$(cd "$(dirname "$script_path")" && pwd)"
 fi
-if [ -z "$src" ] || [ ! -f "$src/skills/deep-plan/SKILL.md" ]; then
+if [ -z "$src" ] || [ ! -f "$src/dist/generic/skills/deep-plan/SKILL.md" ]; then
   command -v git >/dev/null || die "git is required to fetch $REPO_URL"
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT
   git clone --quiet --depth 1 "$REPO_URL" "$tmp/repo"
   src="$tmp/repo"
 fi
+build="$src/dist/generic"
 
 # Refuse to clobber folders this script did not create.
 if [ -e "$PAYLOAD" ] && [ ! -f "$PAYLOAD/$MARKER" ] && [ "$force" = 0 ]; then
   die "$PAYLOAD exists and was not made by install.sh (use --force or set DEEP_PLAN_HOME)"
 fi
 skills=()
-for skill_md in "$src"/skills/*/SKILL.md; do
+for skill_md in "$build"/skills/*/SKILL.md; do
   name="$(basename "$(dirname "$skill_md")")"
   dest="$skills_dir/$name"
   if [ -e "$dest" ] && [ ! -f "$dest/$MARKER" ] && [ "$force" = 0 ]; then
@@ -84,19 +85,26 @@ done
 
 rm -rf "$PAYLOAD"
 mkdir -p "$PAYLOAD"
-tar -C "$src" --exclude='__pycache__' --exclude='tests' -cf - skills agents lib PLAN.md \
-  | tar -C "$PAYLOAD" -xf -
+tar -C "$build" --exclude='__pycache__' -cf - . | tar -C "$PAYLOAD" -xf -
 touch "$PAYLOAD/$MARKER"
 
 python3 - "$PAYLOAD" <<'PY'
 import pathlib
+import re
 import sys
 
 root = pathlib.Path(sys.argv[1])
+# HOST.md defines the plugin-root placeholder first ("- `<root>` is the plugin root"),
+# so the renderer's profile stays the only place that names it.
+host_md = (root / "HOST.md").read_text(encoding="utf-8")
+match = re.search(r"^- `(<[^>`]+>)`", host_md, re.MULTILINE)
+if match is None:
+    sys.exit("install.sh: HOST.md defines no placeholder")
+placeholder = match.group(1)
 for path in root.rglob("*.md"):
     text = path.read_text(encoding="utf-8")
-    if "${CLAUDE_PLUGIN_ROOT}" in text:
-        path.write_text(text.replace("${CLAUDE_PLUGIN_ROOT}", str(root)), encoding="utf-8")
+    if placeholder in text:
+        path.write_text(text.replace(placeholder, str(root)), encoding="utf-8")
 PY
 
 mkdir -p "$skills_dir"

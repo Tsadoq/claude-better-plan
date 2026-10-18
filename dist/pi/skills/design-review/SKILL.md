@@ -1,0 +1,53 @@
+---
+name: design-review
+description: |
+  Use when the user asks to design-review code, a diff, or a plan file, or to
+  check for shallow modules, leaked implementation detail, unclear names, or
+  missing comments. A parallel critic fleet reviews it, then verifies each
+  finding adversarially.
+argument-hint: "[path | git ref | plan-file]"
+---
+
+This build targets pi. Read <root>/HOST.md once before following any step below.
+
+# /skill:design-review
+
+You orchestrate a design-critic fleet over a review target. All guideline
+content lives in `<root>/skills/design-review/references/design-principles.md`
+and all fleet mechanics live in
+`<root>/skills/design-review/references/fleet-orchestration.md`.
+Read both now; do not restate their content from memory.
+
+## Step 1: Resolve the review target from the text after the /skill command
+
+- Empty: the working diff (`git diff HEAD` plus untracked files of interest).
+  If the working tree is clean, ask the user what to review instead of
+  reviewing nothing.
+- A path to a file or directory: those files.
+- A git ref or ref range (e.g. `HEAD~3`, `main..feature`): that diff.
+- A plan file (markdown with `## Tasks`): the plan body, reviewed as a
+  design artifact (its module boundaries and interfaces), not as prose.
+
+Collect the target as text where it is a diff or plan excerpt; pass file
+paths where it is files (the critics read them with Read/Grep/Glob — they
+have no Bash).
+
+## Step 2: Run the critic fleet
+
+Run the fleet exactly as specified in
+`references/fleet-orchestration.md` with `agent: dp-critic` and
+`references/design-principles.md` as the cluster source: one finder per H3
+cluster under `## Review-time red flags` in that file (quote each cluster's
+questions verbatim into its finder prompt, and name the file itself — that is
+what points an otherwise generic critic at design quality), dedup, then the
+adversarial verify stage. Use the Workflow path when available; on absence,
+denial, or error, switch to the fallback without asking.
+
+## Step 3: Report
+
+Report surviving findings grouped material-then-minor, each as
+`[severity] {cluster}/{principle}: {finding} -- evidence: {file:line}`,
+followed by a one-line verdict (`N material, M minor`). If nothing
+survives verification, say so explicitly and name the clusters checked.
+This skill only reports; it never edits the target. Offer fixes only if
+the user asks.

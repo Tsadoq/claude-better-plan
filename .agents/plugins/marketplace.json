@@ -8,7 +8,7 @@
       "name": "deep-plan",
       "source": {
         "source": "local",
-        "path": "./"
+        "path": "./dist/codex"
       },
       "policy": {
         "installation": "AVAILABLE",

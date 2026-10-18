@@ -33,4 +33,6 @@ files = [
     "skills/deep-plan/scripts",
     "skills/deep-plan/hooks",
     "skills/product-artifacts/scripts",
+    "tools",
+    "hosts",
 ]

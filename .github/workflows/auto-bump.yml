@@ -87,7 +87,10 @@ jobs:
           PY
           )
           echo "New version: v${NEW}"
-          git add .claude-plugin/plugin.json plugin.json package.json
+          # Builds that copy a manifest (dist/codex/plugin.json) must carry the new
+          # version too, or the freshness test fails on the release commit.
+          python3 tools/render_hosts.py
+          git add .claude-plugin/plugin.json plugin.json package.json dist/
           git commit -m "chore(release): v${NEW} [skip ci]"
           git tag "v${NEW}"
           git push origin HEAD:main

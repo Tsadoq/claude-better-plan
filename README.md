@@ -22,6 +22,10 @@ Review commands (`/design-review`, `/tdd-review`, `/product-review`) can be poin
 
 ## Install
 
+The skills are written for Claude Code. Every other host gets its own build, rendered from that source into `dist/<host>/` and committed, so each install below loads text written for the agent it runs in rather than Claude's tool names.
+
+**Claude Code** installs the source tree itself:
+
 ```
 /plugin marketplace add tsadoq/claude-better-plan
 /plugin install deep-plan@claude-better-plan
@@ -29,21 +33,21 @@ Review commands (`/design-review`, `/tdd-review`, `/product-review`) can be poin
 
 Requires Claude Code >= v2.1.142 (the Task dependency API used by execute).
 
-### Other agents (Codex, pi, anything that loads `SKILL.md` folders)
-
-**Codex** reads the plugin from the same repo:
+**Codex** installs the Codex build (`dist/codex`, which the marketplace entry points at):
 
 ```
 codex plugin marketplace add tsadoq/claude-better-plan
 ```
 
-**pi** installs it as a package (`package.json` declares `skills/`):
+Run the skills in Codex's Default mode: Plan mode forbids writing files, and every pipeline writes its output to your repo.
+
+**pi** installs the pi build (`dist/pi`) as a package, together with the extensions it needs (subagents, a questionnaire, web search and fetch, a todo list, session-end cleanup):
 
 ```
 pi install git:github.com/tsadoq/claude-better-plan
 ```
 
-**Any agent, via bash.** `install.sh` asks which folder your agent loads skills from (default `~/.agents/skills`, which Codex and pi both read), copies the 12 skills there, and puts the shared scripts, references, and agent definitions in `~/.local/share/deep-plan` (override with `DEEP_PLAN_HOME`):
+**Any agent, via bash.** `install.sh` installs the generic build (`dist/generic`), which names no host-specific tool and carries a `HOST.md` that says how to ask the user, launch an agent, and resolve the plugin root. It asks which folder your agent loads skills from (default `~/.agents/skills`), copies the 12 skills there, and puts the rest of the build in `~/.local/share/deep-plan` (override with `DEEP_PLAN_HOME`), writing that path into the skills in place of the plugin-root placeholder:
 
 ```
 curl -fsSL https://raw.githubusercontent.com/tsadoq/claude-better-plan/main/install.sh | bash
@@ -51,7 +55,17 @@ curl -fsSL https://raw.githubusercontent.com/tsadoq/claude-better-plan/main/inst
 ./install.sh --uninstall ~/.agents/skills
 ```
 
-The skills call their helpers through `${CLAUDE_PLUGIN_ROOT}`, which only Claude Code sets. The bash installer rewrites it to the install path, so prefer it over the native Codex/pi installs if helper calls fail there. The skills are written for Claude Code's tools (`AskUserQuestion`, the `dp-*` subagents); other agents run them with whatever equivalents they have.
+### Updating
+
+Hosts that don't auto-update need a manual refresh to pick up a new release:
+
+```
+codex plugin marketplace upgrade                     # Codex: refresh the Git marketplace snapshot
+pi update git:github.com/tsadoq/claude-better-plan   # pi
+curl -fsSL https://raw.githubusercontent.com/tsadoq/claude-better-plan/main/install.sh | bash   # install.sh
+```
+
+Re-running `install.sh` (or `./install.sh <skills-dir>` from a fresh `git pull`) replaces the folders it installed before, which it recognizes by their marker file, and leaves everything else alone. Use the same skills folder you installed into.
 
 ## Quick start
 
