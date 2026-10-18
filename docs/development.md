@@ -25,6 +25,9 @@ flowchart TD
 | `agents/` | The six `dp-*` subagent definitions. Only `dp-implement-task` may write; the rest are read-only. |
 | `lib/artifact_common.py` | Slug validation and generated-region primitives shared by both pipelines. |
 | `tests/`, `skills/*/tests/` | Contract tests; cross-skill ones at the root, the rest co-located with their skill. |
+| `plugin.json`, `.agents/plugins/marketplace.json` | Codex plugin manifest and marketplace. |
+| `package.json` | pi package manifest (`pi.skills`). |
+| `install.sh` | Bash installer for any agent: copies skills into a folder it asks for, resolves `${CLAUDE_PLUGIN_ROOT}`. |
 | `docs/plans/` | Gitignored dogfood output from planning this repo with its own plugin. Not documentation. |
 
 ## Local development
@@ -57,5 +60,5 @@ Two tests scan `README.md`, `PLAN.md`, and every shipped markdown file: one fail
 
 Versions are cut by CI, never by hand. A `feat:` or `fix:` commit on `main` bumps `.claude-plugin/plugin.json` and tags a release (`chore(release): vX.Y.Z [skip ci]`). Two rules follow:
 
-- Never edit the version field manually.
+- Never edit the version field manually. The bump writes it to `.claude-plugin/plugin.json`, `plugin.json`, and `package.json` together; a test fails if they drift.
 - A change that moves files (a renamed skill, a moved reference) must land as `feat:` or `fix:` — that version bump is what re-keys the installed plugin cache onto the new layout. Documentation-only changes use `docs:` and cut no release.
