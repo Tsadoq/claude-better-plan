@@ -15,7 +15,25 @@
   },
   "pi": {
     "skills": [
-      "./skills"
+      "./dist/pi/skills"
+    ],
+    "extensions": [
+      "./dist/pi/extensions/*.ts",
+      "./dist/pi/extensions/*/index.ts",
+      "node_modules/@zeldrisho/pi-web-fetch/src/index.ts",
+      "node_modules/@ssk_dev/rpiv-todo-lean/index.ts"
     ]
+  },
+  "dependencies": {
+    "@ssk_dev/rpiv-todo-lean": "^2.13.10",
+    "@zeldrisho/pi-web-fetch": "^0.10.1",
+    "undici": "8.11.2"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
   }
 }

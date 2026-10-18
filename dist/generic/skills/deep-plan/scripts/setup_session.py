@@ -1,0 +1,311 @@
+
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+HOME = Path.home()
+
+
+def _runtime_dir() -> Path:
+    raw = os.environ.get("XDG_STATE_HOME")
+    base = Path(raw) if raw else HOME / ".local" / "state"
+    return base / "deep-plan"
+
+
+RUNTIME_DIR = _runtime_dir()
+STATE_DIR = RUNTIME_DIR / "state"
+PROJECTS_JSON = RUNTIME_DIR / "projects.json"
+HOOK_ERROR_LOG = RUNTIME_DIR / "hook-errors.log"
+
+
+def ensure_runtime_dirs() -> None:
+    """Self-bootstrap runtime layout. Replaces the old install.py step."""
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    if not PROJECTS_JSON.exists():
+        PROJECTS_JSON.write_text("{}\n")
+    if not HOOK_ERROR_LOG.exists():
+        HOOK_ERROR_LOG.touch()
+
+
+PERMITTED_UPDATE_KEYS = {
+    "plans_dir",
+    "plan_path",
+    "last_plan_path",
+}
+
+PROJECT_DURABLE_KEYS = ("plans_dir", "last_plan_path")
+
+APPROVED_STATUS_LINE = "**Status**: approved"
+
+
+def utcnow() -> str:
+    return datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def detect_project_root(cwd: Path) -> tuple[Path, bool]:
+    """Return (project_root, no_git)."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            top = result.stdout.strip()
+            if top:
+                return Path(top).resolve(), False
+    except Exception:
+        pass
+    return cwd.resolve(), True
+
+
+def load_projects() -> dict[str, dict[str, Any]]:
+    if not PROJECTS_JSON.exists():
+        return {}
+    try:
+        data = json.loads(PROJECTS_JSON.read_text() or "{}")
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {}
+
+
+def save_projects(data: dict[str, dict[str, Any]]) -> None:
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    PROJECTS_JSON.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+
+def persist_to_project(project_root: str, fields: dict[str, str]) -> None:
+    """Merge durable fields into the project's cross-session record."""
+    projects = load_projects()
+    record = projects.get(project_root, {})
+    record.update(fields)
+    record["last_used_at"] = utcnow()
+    projects[project_root] = record
+    save_projects(projects)
+
+
+def candidate_plans_dirs(project_root: Path) -> list[dict[str, str]]:
+    name = project_root.name or "project"
+    return [
+        {
+            "label": f"{project_root}/docs/plans/",
+            "path": str(project_root / "docs" / "plans"),
+            "recommended": "true",
+        },
+        {
+            "label": f"{project_root}/plans/",
+            "path": str(project_root / "plans"),
+            "recommended": "false",
+        },
+        {
+            "label": f"{project_root.parent}/{name}-plans/",
+            "path": str(project_root.parent / f"{name}-plans"),
+            "recommended": "false",
+        },
+        {
+            "label": f"{project_root}/.claude/plans/",
+            "path": str(project_root / ".claude" / "plans"),
+            "recommended": "false",
+            "warn": (
+                "protected path: writes under .claude/ always prompt "
+                "and cannot be allowlisted via permissions.allow"
+            ),
+        },
+    ]
+
+
+def _is_protected_plans_dir(path: str | Path, project_root: str | Path) -> bool:
+    """True when the plans dir sits under a `.claude/` directory of the project's own.
+
+    Only the segments below the deepest ancestor the two paths share are examined: a
+    `.claude` on the way to the project itself belongs to whoever installed it there,
+    and a project checked out under one is not writing to a protected path.
+    """
+    parts = Path(path).parts
+    root_parts = Path(project_root).parts
+    shared = 0
+    while shared < min(len(parts), len(root_parts)) and parts[shared] == root_parts[shared]:
+        shared += 1
+    return ".claude" in parts[shared:]
+
+
+def state_file_for(session_id: str) -> Path:
+    return STATE_DIR / f"{session_id}.json"
+
+
+def read_state(session_id: str) -> dict[str, Any]:
+    sf = state_file_for(session_id)
+    if not sf.exists():
+        return {}
+    try:
+        data = json.loads(sf.read_text())
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {}
+
+
+def write_state(session_id: str, state: dict[str, Any]) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    state_file_for(session_id).write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
+
+
+def ensure_sandbox(session_id: str) -> Path:
+    sandbox = Path("/tmp") / f"deep-plan-{session_id}"
+    sandbox.mkdir(mode=0o700, exist_ok=True)
+    try:
+        os.chmod(sandbox, 0o700)
+    except Exception:
+        pass
+    return sandbox
+
+
+def cmd_bootstrap(args: argparse.Namespace) -> dict[str, Any]:
+    ensure_runtime_dirs()
+    cwd = Path.cwd()
+    project_root, no_git = detect_project_root(cwd)
+    projects = load_projects()
+    project_key = str(project_root)
+
+    plans_dir: str | None = None
+    prompt_for_plans_dir = True
+    record = projects.get(project_key)
+    if record and record.get("plans_dir"):
+        plans_dir = str(record["plans_dir"])
+        prompt_for_plans_dir = False
+        persist_to_project(project_key, {})
+
+    sandbox = ensure_sandbox(args.session_id)
+
+    state: dict[str, Any] = {
+        "session_id": args.session_id,
+        "started_at": utcnow(),
+        "project_root": project_key,
+        "plans_dir": plans_dir,
+        "plan_path": None,
+        "sandbox_dir": str(sandbox),
+    }
+    write_state(args.session_id, state)
+
+    protected = bool(plans_dir) and _is_protected_plans_dir(str(plans_dir), project_root)
+    return {
+        **state,
+        "sentinels": {
+            "no_git": no_git,
+            "prompt_for_plans_dir": prompt_for_plans_dir,
+            "plans_dir_under_protected_path": plans_dir if protected else False,
+        },
+        "candidate_plans_dirs": candidate_plans_dirs(project_root),
+    }
+
+
+def cmd_update(args: argparse.Namespace) -> dict[str, Any]:
+    ensure_runtime_dirs()
+    state = read_state(args.session_id)
+    if not state:
+        return {"ok": False, "error": f"no state for session_id={args.session_id}"}
+
+    updates: dict[str, Any] = {}
+    for kv in args.update:
+        if "=" not in kv:
+            return {"ok": False, "error": f"malformed update {kv!r}, expected key=value"}
+        key, value = kv.split("=", 1)
+        if key not in PERMITTED_UPDATE_KEYS:
+            return {
+                "ok": False,
+                "error": f"key {key!r} not permitted; allowed: {sorted(PERMITTED_UPDATE_KEYS)}",
+            }
+        updates[key] = value
+
+    state.update(updates)
+    if "plans_dir" in updates and isinstance(updates["plans_dir"], str):
+        plans_dir_path = Path(updates["plans_dir"]).resolve()
+        plans_dir_path.mkdir(parents=True, exist_ok=True)
+        state["plans_dir"] = str(plans_dir_path)
+        updates["plans_dir"] = str(plans_dir_path)
+    durable = {k: str(updates[k]) for k in PROJECT_DURABLE_KEYS if k in updates}
+    if durable:
+        persist_to_project(str(state["project_root"]), durable)
+
+    write_state(args.session_id, state)
+    return {"ok": True, **state}
+
+
+def _approved_plan_or_none(path: Any) -> str | None:
+    """Return the memoized plan path only while it is still trustworthy.
+
+    A memo is stale once the plan file is gone or no longer carries the
+    approved Status line; staleness is defined out of existence (null),
+    never raised to callers.
+    """
+    if not isinstance(path, str) or not path:
+        return None
+    try:
+        text = Path(path).read_text()
+    except OSError:
+        return None
+    return path if APPROVED_STATUS_LINE in text else None
+
+
+def cmd_lookup(args: argparse.Namespace) -> dict[str, Any]:
+    """Read-only project lookup; production caller is deep-plan-execute Step 1."""
+    del args
+    ensure_runtime_dirs()
+    project_root, _no_git = detect_project_root(Path.cwd())
+    record = load_projects().get(str(project_root), {})
+    return {
+        "ok": True,
+        "project_root": str(project_root),
+        "plans_dir": record.get("plans_dir"),
+        "last_plan_path": _approved_plan_or_none(record.get("last_plan_path")),
+    }
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="deep-plan session bootstrap, state mutation, and lookup")
+    p.add_argument("--session-id", help="required for bootstrap and update modes")
+    p.add_argument(
+        "--update",
+        nargs="*",
+        default=[],
+        help="key=value pairs (repeatable). When absent, the call bootstraps the session.",
+    )
+    p.add_argument(
+        "--lookup",
+        action="store_true",
+        help="read-only: print {ok, project_root, plans_dir, last_plan_path} for the cwd's project",
+    )
+    args = p.parse_args()
+    if not args.lookup and not args.session_id:
+        p.error("--session-id is required for bootstrap and update modes")
+    return args
+
+
+def main() -> int:
+    args = parse_args()
+    if args.lookup:
+        result = cmd_lookup(args)
+    elif args.update:
+        result = cmd_update(args)
+    else:
+        result = cmd_bootstrap(args)
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0 if result.get("ok", True) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -12,7 +12,6 @@ venv/
 htmlcov/
 
 build/
-dist/
 *.egg-info/
 
 docs/plans/

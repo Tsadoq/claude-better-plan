@@ -1,0 +1,190 @@
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+from finalize_plan import (
+    PLAN_FILE_NAME,
+    _header_pos,
+    _section_body,
+    _section_end,
+    resolve_plan_path,
+)
+from setup_session import APPROVED_STATUS_LINE
+
+_LABEL_RE = re.compile(r"^\*\*(?P<label>[^*]+)\*\*:[ \t]*(?P<inline>.*)$", re.MULTILINE)
+_TASK_HEADER_RE = re.compile(r"^### Task (\d+):[ \t]*(.*)$", re.MULTILINE)
+_STATUS_LINE_RE = re.compile(r"^\*\*Status\*\*:.*$", re.MULTILINE)
+
+
+def parse_depends_on(value: str) -> list[int]:
+    """Extract task numbers from a `Depends on` value.
+
+    `none` / empty / malformed degrade to `[]` without raising; numeric tokens
+    (single or comma-separated) become an ordered, de-duplicated int list.
+    """
+    seen: set[int] = set()
+    ordered: list[int] = []
+    for token in re.findall(r"\d+", value or ""):
+        n = int(token)
+        if n not in seen:
+            seen.add(n)
+            ordered.append(n)
+    return ordered
+
+
+def _split_subsections(block: str) -> dict[str, str]:
+    """Map each `**Label**` in a task block to its body text."""
+    matches = list(_LABEL_RE.finditer(block))
+    out: dict[str, str] = {}
+    for i, m in enumerate(matches):
+        label = m.group("label").strip()
+        body_start = m.end()
+        body_end = matches[i + 1].start() if i + 1 < len(matches) else len(block)
+        inline = m.group("inline").strip()
+        rest = block[body_start:body_end].strip()
+        out[label] = (inline + ("\n" + rest if rest else "")).strip() if inline else rest
+    return out
+
+
+def _target_file_lines(body: str) -> list[str]:
+    files: list[str] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("-"):
+            entry = stripped.lstrip("-").strip()
+            if entry:
+                files.append(entry)
+    return files
+
+
+def _parse_tasks(text: str) -> list[dict[str, Any]]:
+    tasks_pos = _header_pos(text, "## Tasks")
+    if tasks_pos == -1:
+        return []
+    body = text[tasks_pos : _section_end(text, tasks_pos)]
+
+    parts = re.split(r"(^### Task \d+:.*$)", body, flags=re.MULTILINE)
+    tasks: list[dict[str, Any]] = []
+    for k in range(1, len(parts), 2):
+        header = parts[k]
+        block = parts[k + 1] if k + 1 < len(parts) else ""
+        hm = _TASK_HEADER_RE.match(header.strip())
+        if not hm:
+            continue
+        subs = _split_subsections(block)
+        tasks.append(
+            {
+                "n": int(hm.group(1)),
+                "subject": hm.group(2).strip(),
+                "target_files": _target_file_lines(subs.get("Target files", "")),
+                "change": subs.get("Change", "").strip(),
+                "tests": subs.get("Tests (TDD)", "").strip() or None,
+                "verification": subs.get("Verification", "").strip(),
+                "depends_on": parse_depends_on(subs.get("Depends on", "")),
+            }
+        )
+    return tasks
+
+
+def _parse_decisions(text: str) -> list[dict[str, str]]:
+    body = _section_body(text, "## Decisions made")
+    rows: list[dict[str, str]] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        if not cells or cells[0] in ("#", "") or set("".join(cells)) <= set("-: "):
+            continue
+        if not cells[0].isdigit():
+            continue
+        padded = (cells + [""] * 5)[:5]
+        rows.append(
+            {
+                "n": padded[0],
+                "decision": padded[1],
+                "chosen": padded[2],
+                "rejected": padded[3],
+                "rationale": padded[4],
+            }
+        )
+    return rows
+
+
+def parse_plan(text: str) -> dict[str, Any]:
+    """Parse a plan body into tasks, decisions, and the open-questions text."""
+    return {
+        "tasks": _parse_tasks(text),
+        "decisions": _parse_decisions(text),
+        "open_questions": _section_body(text, "## Open questions"),
+    }
+
+
+def _unapproved_error(plan: Path, text: str) -> str | None:
+    """Refusal message for a folder plan that is not approved, else None.
+
+    Only a `<slug>/plan.md` member is checked, whichever way its path was
+    resolved: the Status line is stamped by the folder-plan template, and a
+    flat legacy `<slug>.md` never carried one. The message quotes the plan's
+    own `**Status**` line, or `missing` when it has none.
+    """
+    if plan.name != PLAN_FILE_NAME or APPROVED_STATUS_LINE in text:
+        return None
+    m = _STATUS_LINE_RE.search(text)
+    found = m.group(0).strip() if m else "missing"
+    return f"plan is not approved: Status line is '{found}'"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="parse a deep-plan plan file into structured JSON")
+    parser.add_argument(
+        "--plan", required=True, help="path to the finalized plan file or plan folder"
+    )
+    parser.add_argument(
+        "--task",
+        type=int,
+        help="emit only this task number, for a single-task implementer",
+    )
+    parser.add_argument(
+        "--allow-unapproved",
+        action="store_true",
+        help="parse a folder plan that does not carry the approved Status line",
+    )
+    args = parser.parse_args()
+
+    plan = resolve_plan_path(Path(args.plan).expanduser().resolve())
+    if not plan.exists():
+        print(json.dumps({"ok": False, "error": f"plan file not found: {plan}"}))
+        return 1
+
+    text = plan.read_text()
+    if not args.allow_unapproved:
+        error = _unapproved_error(plan, text)
+        if error:
+            print(json.dumps({"ok": False, "error": error}))
+            return 1
+
+    parsed = parse_plan(text)
+
+    if args.task is not None:
+        selected = next((t for t in parsed["tasks"] if t["n"] == args.task), None)
+        if selected is None:
+            print(json.dumps({"ok": False, "error": f"task {args.task} not found in {plan}"}))
+            return 1
+        print(json.dumps({"ok": True, "plan": str(plan), "task": selected}, indent=2, sort_keys=True))
+        return 0
+
+    parsed["ok"] = bool(parsed["tasks"])
+    parsed["plan"] = str(plan)
+    print(json.dumps(parsed, indent=2, sort_keys=True))
+    return 0 if parsed["ok"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
