@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "deep-plan",
-  "version": "0.21.1",
+  "version": "0.22.0",
   "description": "Deep planning for non-trivial work: triangulated research, decisions put to you, deep web research per branch, and an AI-consumable plan file in your repo.",
   "author": {
     "name": "tsadoq"
