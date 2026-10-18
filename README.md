@@ -55,6 +55,18 @@ curl -fsSL https://raw.githubusercontent.com/tsadoq/claude-better-plan/main/inst
 ./install.sh --uninstall ~/.agents/skills
 ```
 
+### Updating
+
+Hosts that don't auto-update need a manual refresh to pick up a new release:
+
+```
+codex plugin marketplace upgrade                     # Codex: refresh the Git marketplace snapshot
+pi update git:github.com/tsadoq/claude-better-plan   # pi
+curl -fsSL https://raw.githubusercontent.com/tsadoq/claude-better-plan/main/install.sh | bash   # install.sh
+```
+
+Re-running `install.sh` (or `./install.sh <skills-dir>` from a fresh `git pull`) replaces the folders it installed before, which it recognizes by their marker file, and leaves everything else alone. Use the same skills folder you installed into.
+
 ## Quick start
 
 Plan a change, then build it:
