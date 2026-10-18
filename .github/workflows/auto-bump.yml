@@ -67,8 +67,9 @@ jobs:
           import os
           import pathlib
 
-          path = pathlib.Path(".claude-plugin/plugin.json")
-          data = json.loads(path.read_text())
+          # Claude Code, Codex, and pi each read their own manifest; keep them in step.
+          paths = [pathlib.Path(p) for p in (".claude-plugin/plugin.json", "plugin.json", "package.json")]
+          data = json.loads(paths[0].read_text())
           major, minor, patch = (int(x) for x in data["version"].split("."))
           level = os.environ["LEVEL"]
           if level == "major":
@@ -78,13 +79,15 @@ jobs:
           else:
               patch += 1
           new = f"{major}.{minor}.{patch}"
-          data["version"] = new
-          path.write_text(json.dumps(data, indent=2) + "\n")
+          for path in paths:
+              manifest = json.loads(path.read_text())
+              manifest["version"] = new
+              path.write_text(json.dumps(manifest, indent=2) + "\n")
           print(new)
           PY
           )
           echo "New version: v${NEW}"
-          git add .claude-plugin/plugin.json
+          git add .claude-plugin/plugin.json plugin.json package.json
           git commit -m "chore(release): v${NEW} [skip ci]"
           git tag "v${NEW}"
           git push origin HEAD:main

@@ -29,6 +29,30 @@ Review commands (`/design-review`, `/tdd-review`, `/product-review`) can be poin
 
 Requires Claude Code >= v2.1.142 (the Task dependency API used by execute).
 
+### Other agents (Codex, pi, anything that loads `SKILL.md` folders)
+
+**Codex** reads the plugin from the same repo:
+
+```
+codex plugin marketplace add tsadoq/claude-better-plan
+```
+
+**pi** installs it as a package (`package.json` declares `skills/`):
+
+```
+pi install git:github.com/tsadoq/claude-better-plan
+```
+
+**Any agent, via bash.** `install.sh` asks which folder your agent loads skills from (default `~/.agents/skills`, which Codex and pi both read), copies the 12 skills there, and puts the shared scripts, references, and agent definitions in `~/.local/share/deep-plan` (override with `DEEP_PLAN_HOME`):
+
+```
+curl -fsSL https://raw.githubusercontent.com/tsadoq/claude-better-plan/main/install.sh | bash
+./install.sh ~/.agents/skills        # from a checkout, folder given up front
+./install.sh --uninstall ~/.agents/skills
+```
+
+The skills call their helpers through `${CLAUDE_PLUGIN_ROOT}`, which only Claude Code sets. The bash installer rewrites it to the install path, so prefer it over the native Codex/pi installs if helper calls fail there. The skills are written for Claude Code's tools (`AskUserQuestion`, the `dp-*` subagents); other agents run them with whatever equivalents they have.
+
 ## Quick start
 
 Plan a change, then build it:

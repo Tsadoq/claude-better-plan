@@ -1,0 +1,20 @@
+{
+  "name": "claude-better-plan",
+  "interface": {
+    "displayName": "claude-better-plan"
+  },
+  "plugins": [
+    {
+      "name": "deep-plan",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
